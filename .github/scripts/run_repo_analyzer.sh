@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Universal AI-Powered Repository Analyzer Runner for CI/CD
+# Universal AI-Powered Repository Analyzer Runner for CI/CD (macOS)
 # Runs repo_analyzer.py, processes results, and installs detected technologies
 # Usage: ./run_repo_analyzer.sh <github_repo_url> [model] [config_file]
 
@@ -30,13 +30,22 @@ if [ -z "$REPO_URL" ]; then
     exit 1
 fi
 
+# Check for Homebrew
+if ! command -v brew >/dev/null 2>&1; then
+    log "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    eval "$(/opt/homebrew/bin/brew shellenv)" || eval "$(/usr/local/bin/brew shellenv)"
+fi
+log "Homebrew: $(brew --version | head -n 1)"
+
 # Check Python 3.8+
 if ! command -v python3.12 >/dev/null 2>&1; then
     log "Python 3.12 not found. Trying python3..."
     PYTHON_CMD=python3
     if ! command -v python3 >/dev/null 2>&1 || ! python3 --version | grep -q "3.[89]\|3.1[0-2]"; then
-        log "ERROR: Python 3.8+ required"
-        exit 1
+        log "Installing Python 3.12 via Homebrew..."
+        brew install python@3.12
+        PYTHON_CMD=python3.12
     fi
 else
     PYTHON_CMD=python3.12
@@ -57,11 +66,18 @@ REQUIRED_PACKAGES=("requests>=2.31.0" "openai>=1.0.0" "toml>=0.10.2" "PyYAML>=6.
 for pkg in "${REQUIRED_PACKAGES[@]}"; do
     if ! pip show "$(echo "$pkg" | cut -d'>' -f1)" >/dev/null 2>&1; then
         log "Installing $pkg..."
-        pip install --user "$pkg"
+        pip install "$pkg"
     else
         log "$pkg already installed"
     fi
 done
+
+# Install jq
+if ! command -v jq >/dev/null 2>&1; then
+    log "Installing jq..."
+    brew install jq
+fi
+log "jq: $(jq --version)"
 
 # Verify API keys
 API_KEYS=("ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GOOGLE_API_KEY")
@@ -123,11 +139,11 @@ if [ -f "$OUTPUT_FILE" ]; then
     if echo "$TECHNOLOGIES" | grep -qi "java"; then
         log "Installing Java (JDK 17) and Maven..."
         if ! command -v java >/dev/null 2>&1; then
-            apt-get update
-            apt-get install -y openjdk-17-jdk
+            brew install openjdk@17
+            export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
         fi
         if ! command -v mvn >/dev/null 2>&1 && echo "$PACKAGE_MANAGERS" | grep -qi "maven"; then
-            apt-get install -y maven
+            brew install maven
         fi
         log "Java: $(java -version 2>&1 | head -n 1)"
         [ -n "$(command -v mvn)" ] && log "Maven: $(mvn -version | head -n 1)"
@@ -137,8 +153,8 @@ if [ -f "$OUTPUT_FILE" ]; then
     if echo "$TECHNOLOGIES" | grep -qi "javascript\|typescript\|node.js"; then
         log "Installing Node.js 20 and npm..."
         if ! command -v node >/dev/null 2>&1; then
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-            apt-get install -y nodejs
+            brew install node@20
+            export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
         fi
         log "Node.js: $(node --version)"
         log "npm: $(npm --version)"
@@ -160,9 +176,8 @@ if [ -f "$OUTPUT_FILE" ]; then
     # Install Python-related tools
     if echo "$TECHNOLOGIES" | grep -qi "python" && echo "$PACKAGE_MANAGERS" | grep -qi "pip"; then
         log "Installing additional Python tools (if specified)..."
-        # Example: Install pytest if tests are detected
         if jq -r '.features.has_tests' "$OUTPUT_FILE" | grep -qi "true"; then
-            pip install --user pytest
+            pip install pytest
             log "pytest installed"
         fi
     fi
@@ -171,8 +186,7 @@ if [ -f "$OUTPUT_FILE" ]; then
     if echo "$TECHNOLOGIES" | grep -qi "go"; then
         log "Installing Go..."
         if ! command -v go >/dev/null 2>&1; then
-            curl -fsSL https://golang.org/dl/go1.23.0.linux-amd64.tar.gz | tar -C /usr/local -xz
-            export PATH=$PATH:/usr/local/go/bin
+            brew install go
         fi
         log "Go: $(go version)"
     fi
@@ -181,8 +195,8 @@ if [ -f "$OUTPUT_FILE" ]; then
     if echo "$TECHNOLOGIES" | grep -qi "rust"; then
         log "Installing Rust..."
         if ! command -v rustc >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            source "$HOME/.cargo/env"
+            brew install rust
+            export PATH="$HOME/.cargo/bin:$PATH"
         fi
         log "Rust: $(rustc --version)"
         if echo "$PACKAGE_MANAGERS" | grep -qi "cargo"; then
