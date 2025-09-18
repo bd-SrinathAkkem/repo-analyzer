@@ -133,10 +133,9 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: analysis-results-${{ needs.validate-inputs.outputs.repo_owner }}-${{ needs.validate-inputs.outputs.repo_name }}-${{ github.run_number }}
+          name: repo_latest.json
           path: |
             output/
-            logs/
           retention-days: 30
           compression-level: 6
 
