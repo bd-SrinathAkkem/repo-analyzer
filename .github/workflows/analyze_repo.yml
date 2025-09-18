@@ -116,6 +116,8 @@ jobs:
           echo "Config File: ${{ inputs.config_file }}"
           echo "::endgroup::"
 
+          # Remove existing directory if it exists and clone fresh
+          rm -rf /tmp/repo-analyzer
           git clone https://github.com/bd-SrinathAkkem/repo-analyzer.git /tmp/repo-analyzer
           SCRIPT_PATH="/tmp/repo-analyzer/.github/scripts/run_repo_analyzer.sh"
           chmod +x $SCRIPT_PATH
