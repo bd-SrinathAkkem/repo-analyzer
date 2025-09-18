@@ -103,57 +103,28 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Install system dependencies
+      - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y jq curl git
+          if [[ -f "requirements.txt" ]]; then
+            pip install -r requirements.txt
+          fi
 
-      - name: Create workspace
+      - name: Create output directories
         run: |
-          mkdir -p .github/scripts
           mkdir -p output
           mkdir -p logs
 
-      - name: Download analyzer script
+      - name: Verify analyzer files
         run: |
-          SCRIPT_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/repo_analyzer.py"
-          curl -sSL "$SCRIPT_URL" -o .github/scripts/repo_analyzer.py || {
-            echo "Failed to download from main branch, trying current commit"
-            cp repo_analyzer.py .github/scripts/repo_analyzer.py 2>/dev/null || {
-              echo "Error: Could not find repo_analyzer.py"
-              exit 1
-            }
-          }
-          chmod +x .github/scripts/repo_analyzer.py
-
-      - name: Setup runner script
-        run: |
-          if [[ -f "run_repo_analyzer.sh" ]]; then
-            cp run_repo_analyzer.sh .github/scripts/run_repo_analyzer.sh
-          else
-            echo "Warning: run_repo_analyzer.sh not found, creating basic runner"
-            cat > .github/scripts/run_repo_analyzer.sh << 'EOF'
-          #!/bin/bash
-          set -euo pipefail
-
-          REPO_URL="$1"
-          MODEL="${2:-claude-sonnet}"
-          CONFIG_FILE="${3:-}"
-          ANALYSIS_DEPTH="${4:-standard}"
-
-          echo "Starting analysis of: $REPO_URL"
-          echo "Model: $MODEL"
-          echo "Analysis depth: $ANALYSIS_DEPTH"
-
-          python .github/scripts/repo_analyzer.py \
-            --repo-url "$REPO_URL" \
-            --model "$MODEL" \
-            ${CONFIG_FILE:+--config "$CONFIG_FILE"} \
-            --analysis-depth "$ANALYSIS_DEPTH" \
-            --output-dir output/
-          EOF
+          if [[ ! -f "repo_analyzer.py" ]]; then
+            echo "Error: repo_analyzer.py not found in repository"
+            exit 1
           fi
-          chmod +x .github/scripts/run_repo_analyzer.sh
+          if [[ ! -f "run_repo_analyzer.sh" ]]; then
+            echo "Error: run_repo_analyzer.sh not found in repository"
+            exit 1
+          fi
+          chmod +x run_repo_analyzer.sh
 
       - name: Validate API keys
         run: |
@@ -195,7 +166,7 @@ jobs:
           echo "Config File: ${{ inputs.config_file }}"
           echo "::endgroup::"
 
-          ./.github/scripts/run_repo_analyzer.sh \
+          ./run_repo_analyzer.sh \
             "${{ inputs.repo_url }}" \
             "${{ inputs.model }}" \
             "${{ inputs.config_file }}" \
