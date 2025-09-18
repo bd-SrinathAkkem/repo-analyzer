@@ -139,6 +139,128 @@ if [ -f "$OUTPUT_FILE" ]; then
     PACKAGE_MANAGERS=$(jq -r '.build_ecosystem.package_managers[]? // empty' "$OUTPUT_FILE")
     BUILD_TOOLS=$(jq -r '(.build_ecosystem.build_tools[]? // empty), (.build_ecosystem.bundlers[]? // empty)' "$OUTPUT_FILE")
 
+    # Extract and display build commands
+    log "=== EXTRACTED BUILD COMMANDS ==="
+
+    # Parse key commands and store them
+    CLEAN_INSTALL_CMD=$(jq -r '.commands.clean_install // empty' "$OUTPUT_FILE")
+    INSTALL_CMD=$(jq -r '.commands.install_dependencies // empty' "$OUTPUT_FILE")
+    BUILD_DEV_CMD=$(jq -r '.commands.build_development // empty' "$OUTPUT_FILE")
+    BUILD_PROD_CMD=$(jq -r '.commands.build_production // empty' "$OUTPUT_FILE")
+    START_DEV_CMD=$(jq -r '.commands.start_development // empty' "$OUTPUT_FILE")
+
+    # Create commands summary file
+    COMMANDS_FILE="$OUTPUT_DIR/extracted_commands.sh"
+    cat > "$COMMANDS_FILE" << EOF
+#!/bin/bash
+# Extracted build commands from repository analysis
+# Generated on $(date)
+
+# Clean install command
+clean_install() {
+    echo "Running clean install..."
+    $CLEAN_INSTALL_CMD
+}
+
+# Install dependencies command
+install() {
+    echo "Installing dependencies..."
+    $INSTALL_CMD
+}
+
+# Development build command
+build_dev() {
+    echo "Running development build..."
+    $BUILD_DEV_CMD
+}
+
+# Production build command
+build_prod() {
+    echo "Running production build..."
+    $BUILD_PROD_CMD
+}
+
+# Start development server
+start_dev() {
+    echo "Starting development server..."
+    $START_DEV_CMD
+}
+EOF
+    chmod +x "$COMMANDS_FILE"
+
+    # Display commands in log
+    [ -n "$CLEAN_INSTALL_CMD" ] && log "Clean Install: $CLEAN_INSTALL_CMD"
+    [ -n "$INSTALL_CMD" ] && log "Install Dependencies: $INSTALL_CMD"
+    [ -n "$BUILD_DEV_CMD" ] && log "Build Development: $BUILD_DEV_CMD"
+    [ -n "$BUILD_PROD_CMD" ] && log "Build Production: $BUILD_PROD_CMD"
+    [ -n "$START_DEV_CMD" ] && log "Start Development: $START_DEV_CMD"
+
+    log "Commands saved to: $COMMANDS_FILE"
+
+    # Store commands in GitHub for later use
+    if [ -n "$GITHUB_ACTIONS" ]; then
+        # Running in GitHub Actions - upload as artifact and store in repo
+        log "=== STORING COMMANDS IN GITHUB ==="
+
+        # Create commands directory in repo
+        mkdir -p ./.github/extracted-commands
+        cp "$COMMANDS_FILE" ./.github/extracted-commands/
+
+        # Create a summary file with just the commands for easy reference
+        COMMANDS_SUMMARY="./.github/extracted-commands/commands_summary.txt"
+        cat > "$COMMANDS_SUMMARY" << EOF
+# Repository Build Commands
+# Generated on $(date)
+# Repository: $REPO_URL
+
+Clean Install: $CLEAN_INSTALL_CMD
+Install Dependencies: $INSTALL_CMD
+Build Development: $BUILD_DEV_CMD
+Build Production: $BUILD_PROD_CMD
+Start Development: $START_DEV_CMD
+EOF
+
+        # Create GitHub Actions output
+        if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "commands_file=$COMMANDS_FILE" >> "$GITHUB_OUTPUT"
+            echo "clean_install=$CLEAN_INSTALL_CMD" >> "$GITHUB_OUTPUT"
+            echo "install_deps=$INSTALL_CMD" >> "$GITHUB_OUTPUT"
+            echo "build_dev=$BUILD_DEV_CMD" >> "$GITHUB_OUTPUT"
+            echo "build_prod=$BUILD_PROD_CMD" >> "$GITHUB_OUTPUT"
+            echo "start_dev=$START_DEV_CMD" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Commit commands to repository if GITHUB_TOKEN is available
+        if [ -n "$GITHUB_TOKEN" ] && command -v git >/dev/null 2>&1; then
+            log "Committing extracted commands to repository..."
+            git config --global user.name "repo-analyzer-bot"
+            git config --global user.email "repo-analyzer@github.actions"
+            git add ./.github/extracted-commands/
+            if git diff --staged --quiet; then
+                log "No changes to commit"
+            else
+                git commit -m "Add extracted build commands from repository analysis
+
+Generated from: $REPO_URL
+Model: $MODEL
+Timestamp: $(date)
+
+Commands:
+- Clean Install: $CLEAN_INSTALL_CMD
+- Install: $INSTALL_CMD
+- Build Dev: $BUILD_DEV_CMD
+- Build Prod: $BUILD_PROD_CMD
+- Start Dev: $START_DEV_CMD"
+                git push origin HEAD || log "WARNING: Could not push to repository"
+                log "Commands committed to repository at .github/extracted-commands/"
+            fi
+        fi
+
+        log "Commands stored in GitHub at .github/extracted-commands/"
+    else
+        log "Not running in GitHub Actions - commands saved locally only"
+    fi
+
     # Install Java-related tools
     if echo "$TECHNOLOGIES" | grep -qi "java"; then
         log "Installing Java (JDK 17) and Maven..."
