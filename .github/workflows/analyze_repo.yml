@@ -104,15 +104,15 @@ jobs:
 
       - name: Verify analyzer files
         run: |
-          if [[ ! -f "repo_analyzer.py" ]]; then
+          if [[ ! -f ".github/scripts/repo_analyzer.py" ]]; then
             echo "Error: repo_analyzer.py not found in repository"
             exit 1
           fi
-          if [[ ! -f "run_repo_analyzer.sh" ]]; then
+          if [[ ! -f ".github/scripts/run_repo_analyzer.sh" ]]; then
             echo "Error: run_repo_analyzer.sh not found in repository"
             exit 1
           fi
-          chmod +x run_repo_analyzer.sh
+          chmod +x .github/scripts/run_repo_analyzer.sh
 
       - name: Run repository analysis
         env:
@@ -128,7 +128,7 @@ jobs:
           echo "Config File: ${{ inputs.config_file }}"
           echo "::endgroup::"
 
-          ./run_repo_analyzer.sh \
+          .github/scripts/run_repo_analyzer.sh \
             "${{ inputs.repo_url }}" \
             "${{ inputs.model }}" \
             "${{ inputs.config_file }}" \
