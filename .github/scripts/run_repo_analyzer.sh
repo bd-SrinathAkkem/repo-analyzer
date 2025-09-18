@@ -98,7 +98,7 @@ fi
 SCRIPT_NAME="repo_analyzer.py"
 if [ ! -f "$SCRIPT_NAME" ]; then
     log "Downloading $SCRIPT_NAME..."
-    curl -sSL "https://raw.githubusercontent.com/SrinathAkkem/repo-analyzer/main/repo_analyzer.py" -o "$SCRIPT_NAME"
+    curl -sSL "https://raw.githubusercontent.com/bd-SrinathAkkem/repo-analyzer/main/repo_analyzer.py" -o "$SCRIPT_NAME"
     chmod u+x "$SCRIPT_NAME"
 else
     chmod u+rw "$SCRIPT_NAME"
