@@ -104,20 +104,30 @@ jobs:
 
       - name: Verify analyzer files
         run: |
-          if [[ ! -f ".github/scripts/repo_analyzer.py" ]]; then
-            echo "Error: repo_analyzer.py not found in repository"
-            exit 1
+          # Check if this workflow is being called from another repository
+          if [[ "${{ github.repository }}" == "bd-SrinathAkkem/repo-analyzer" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Running in the original repository or via direct workflow_dispatch
+            if [[ ! -f ".github/scripts/repo_analyzer.py" ]]; then
+              echo "Error: repo_analyzer.py not found in repository"
+              exit 1
+            fi
+            if [[ ! -f ".github/scripts/run_repo_analyzer.sh" ]]; then
+              echo "Error: run_repo_analyzer.sh not found in repository"
+              exit 1
+            fi
+            chmod +x .github/scripts/run_repo_analyzer.sh
+          else
+            # Running as a workflow_call from another repository
+            echo "Running as workflow_call from external repository"
+            # Skip file verification as files are in the called repository
           fi
-          if [[ ! -f ".github/scripts/run_repo_analyzer.sh" ]]; then
-            echo "Error: run_repo_analyzer.sh not found in repository"
-            exit 1
-          fi
-          chmod +x .github/scripts/run_repo_analyzer.sh
 
       - name: Run repository analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -128,7 +138,19 @@ jobs:
           echo "Config File: ${{ inputs.config_file }}"
           echo "::endgroup::"
 
-          .github/scripts/run_repo_analyzer.sh \
+          # Check if this workflow is being called from another repository
+          if [[ "${{ github.repository }}" == "bd-SrinathAkkem/repo-analyzer" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Running in the original repository
+            SCRIPT_PATH=".github/scripts/run_repo_analyzer.sh"
+          else
+            # Running as a workflow_call from another repository
+            # Clone the repo-analyzer repository to get the scripts
+            git clone https://github.com/bd-SrinathAkkem/repo-analyzer.git /tmp/repo-analyzer
+            SCRIPT_PATH="/tmp/repo-analyzer/.github/scripts/run_repo_analyzer.sh"
+            chmod +x $SCRIPT_PATH
+          fi
+
+          $SCRIPT_PATH \
             "${{ inputs.repo_url }}" \
             "${{ inputs.model }}" \
             "${{ inputs.config_file }}" \
