@@ -220,7 +220,7 @@ Build Production: $BUILD_PROD_CMD
 Start Development: $START_DEV_CMD
 EOF
 
-        # Create GitHub Actions output
+        # Create GitHub Actions output and environment variables
         if [ -n "$GITHUB_OUTPUT" ]; then
             echo "commands_file=$COMMANDS_FILE" >> "$GITHUB_OUTPUT"
             echo "clean_install=$CLEAN_INSTALL_CMD" >> "$GITHUB_OUTPUT"
@@ -228,6 +228,30 @@ EOF
             echo "build_dev=$BUILD_DEV_CMD" >> "$GITHUB_OUTPUT"
             echo "build_prod=$BUILD_PROD_CMD" >> "$GITHUB_OUTPUT"
             echo "start_dev=$START_DEV_CMD" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Store commands in GitHub environment variables for use in subsequent jobs
+        if [ -n "$GITHUB_ENV" ]; then
+            echo "REPO_CLEAN_INSTALL=$CLEAN_INSTALL_CMD" >> "$GITHUB_ENV"
+            echo "REPO_INSTALL_DEPS=$INSTALL_CMD" >> "$GITHUB_ENV"
+            echo "REPO_BUILD_DEV=$BUILD_DEV_CMD" >> "$GITHUB_ENV"
+            echo "REPO_BUILD_PROD=$BUILD_PROD_CMD" >> "$GITHUB_ENV"
+            echo "REPO_START_DEV=$START_DEV_CMD" >> "$GITHUB_ENV"
+
+            # Store technology info as well
+            TECH_STACK=$(jq -r '.repository_analysis.technology_stack | join(",")' "$OUTPUT_FILE")
+            PRIMARY_TECH=$(jq -r '.repository_analysis.primary_technology' "$OUTPUT_FILE")
+            echo "REPO_TECH_STACK=$TECH_STACK" >> "$GITHUB_ENV"
+            echo "REPO_PRIMARY_TECH=$PRIMARY_TECH" >> "$GITHUB_ENV"
+
+            log "Commands stored in GitHub environment variables:"
+            log "  REPO_CLEAN_INSTALL=$CLEAN_INSTALL_CMD"
+            log "  REPO_INSTALL_DEPS=$INSTALL_CMD"
+            log "  REPO_BUILD_DEV=$BUILD_DEV_CMD"
+            log "  REPO_BUILD_PROD=$BUILD_PROD_CMD"
+            log "  REPO_START_DEV=$START_DEV_CMD"
+            log "  REPO_TECH_STACK=$TECH_STACK"
+            log "  REPO_PRIMARY_TECH=$PRIMARY_TECH"
         fi
 
         # Commit commands to repository if GITHUB_TOKEN is available
