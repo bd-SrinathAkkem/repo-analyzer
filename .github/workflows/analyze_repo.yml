@@ -7,7 +7,7 @@ on:
         description: 'GitHub Repository URL to analyze'
         required: true
       model:
-        description: 'AI model (e.g., claude-sonnet, gpt-4, gemini)'
+        description: 'AI model (e.g., sonnet, gpt-4, gemini)'
         default: 'claude-sonnet'
       config_file:
         description: 'Optional config file path (TOML/YAML/JSON)'
@@ -20,7 +20,7 @@ on:
         type: string
       model:
         description: 'AI model to use'
-        default: 'claude-sonnet'
+        default: 'sonnet'
         type: string
       config_file:
         description: 'Optional config file path'
@@ -43,6 +43,8 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -53,20 +55,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install system dependencies
-        run: apt-get update && apt-get install -y jq curl
-
-      - name: Create scripts directory
-        run: mkdir -p .github/scripts
-
-      - name: Copy analyzer script
-        run: |
-          curl -sSL "https://raw.githubusercontent.com/bd-SrinathAkkem/repo-analyzer/main/repo_analyzer.py" -o .github/scripts/repo_analyzer.py
-          chmod u+x .github/scripts/repo_analyzer.py
-
-      - name: Write runner script
-        run: |
-          mv run_repo_analyzer.sh .github/scripts/run_repo_analyzer.sh
-          chmod u+x .github/scripts/run_repo_analyzer.sh
+        run: apt-get update && apt-get install -y jq
 
       - name: Run analyzer
         env:
