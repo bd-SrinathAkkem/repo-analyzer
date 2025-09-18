@@ -4,14 +4,29 @@ on:
   workflow_dispatch:
     inputs:
       repo_url:
-        description: 'GitHub Repository URL to analyze'
+        description: 'GitHub Repository URL to analyze (e.g., https://github.com/owner/repo)'
         required: true
+        type: string
       model:
-        description: 'AI model (e.g., sonnet, gpt-4, gemini)'
+        description: 'AI model to use'
         default: 'claude-sonnet'
+        type: choice
+        options:
+          - claude-sonnet
+          - gpt-4
+          - gemini
       config_file:
         description: 'Optional config file path (TOML/YAML/JSON)'
         default: ''
+        type: string
+      analysis_depth:
+        description: 'Analysis depth'
+        default: 'standard'
+        type: choice
+        options:
+          - quick
+          - standard
+          - deep
   workflow_call:
     inputs:
       repo_url:
@@ -20,11 +35,15 @@ on:
         type: string
       model:
         description: 'AI model to use'
-        default: 'sonnet'
+        default: 'claude-sonnet'
         type: string
       config_file:
         description: 'Optional config file path'
         default: ''
+        type: string
+      analysis_depth:
+        description: 'Analysis depth'
+        default: 'standard'
         type: string
     secrets:
       GITHUB_TOKEN:
@@ -40,32 +59,197 @@ on:
         description: 'Google API key for Gemini models'
         required: false
 
+env:
+  PYTHONUNBUFFERED: 1
+  PYTHONDONTWRITEBYTECODE: 1
+
 jobs:
-  analyze:
+  validate-inputs:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    outputs:
+      repo_name: ${{ steps.validate.outputs.repo_name }}
+      repo_owner: ${{ steps.validate.outputs.repo_owner }}
+    steps:
+      - name: Validate repository URL
+        id: validate
+        run: |
+          REPO_URL="${{ inputs.repo_url }}"
+
+          if [[ ! "$REPO_URL" =~ ^https://github\.com/[^/]+/[^/]+/?$ ]]; then
+            echo "Error: Invalid GitHub repository URL format"
+            echo "Expected format: https://github.com/owner/repo"
+            echo "Received: $REPO_URL"
+            exit 1
+          fi
+
+          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://github.com/||' | sed 's|/$||')
+          REPO_OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1)
+          REPO_NAME=$(echo "$REPO_PATH" | cut -d'/' -f2)
+
+          echo "repo_owner=$REPO_OWNER" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "Validated repository: $REPO_OWNER/$REPO_NAME"
+
+  analyze:
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Install system dependencies
-        run: apt-get update && apt-get install -y jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y jq curl git
 
-      - name: Run analyzer
+      - name: Create workspace
+        run: |
+          mkdir -p .github/scripts
+          mkdir -p output
+          mkdir -p logs
+
+      - name: Download analyzer script
+        run: |
+          SCRIPT_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/repo_analyzer.py"
+          curl -sSL "$SCRIPT_URL" -o .github/scripts/repo_analyzer.py || {
+            echo "Failed to download from main branch, trying current commit"
+            cp repo_analyzer.py .github/scripts/repo_analyzer.py 2>/dev/null || {
+              echo "Error: Could not find repo_analyzer.py"
+              exit 1
+            }
+          }
+          chmod +x .github/scripts/repo_analyzer.py
+
+      - name: Setup runner script
+        run: |
+          if [[ -f "run_repo_analyzer.sh" ]]; then
+            cp run_repo_analyzer.sh .github/scripts/run_repo_analyzer.sh
+          else
+            echo "Warning: run_repo_analyzer.sh not found, creating basic runner"
+            cat > .github/scripts/run_repo_analyzer.sh << 'EOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          REPO_URL="$1"
+          MODEL="${2:-claude-sonnet}"
+          CONFIG_FILE="${3:-}"
+          ANALYSIS_DEPTH="${4:-standard}"
+
+          echo "Starting analysis of: $REPO_URL"
+          echo "Model: $MODEL"
+          echo "Analysis depth: $ANALYSIS_DEPTH"
+
+          python .github/scripts/repo_analyzer.py \
+            --repo-url "$REPO_URL" \
+            --model "$MODEL" \
+            ${CONFIG_FILE:+--config "$CONFIG_FILE"} \
+            --analysis-depth "$ANALYSIS_DEPTH" \
+            --output-dir output/
+          EOF
+          fi
+          chmod +x .github/scripts/run_repo_analyzer.sh
+
+      - name: Validate API keys
+        run: |
+          MODEL="${{ inputs.model }}"
+          case "$MODEL" in
+            claude-sonnet|claude-*)
+              if [[ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]]; then
+                echo "Error: ANTHROPIC_API_KEY is required for Claude models"
+                exit 1
+              fi
+              ;;
+            gpt-*|openai-*)
+              if [[ -z "${{ secrets.OPENAI_API_KEY }}" ]]; then
+                echo "Error: OPENAI_API_KEY is required for OpenAI models"
+                exit 1
+              fi
+              ;;
+            gemini|google-*)
+              if [[ -z "${{ secrets.GOOGLE_API_KEY }}" ]]; then
+                echo "Error: GOOGLE_API_KEY is required for Google models"
+                exit 1
+              fi
+              ;;
+          esac
+
+      - name: Run repository analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: .github/scripts/run_repo_analyzer.sh "${{ inputs.repo_url }}" "${{ inputs.model }}" "${{ inputs.config_file }}"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          set -euo pipefail
 
-      - name: Upload results
+          echo "::group::Analysis Configuration"
+          echo "Repository: ${{ inputs.repo_url }}"
+          echo "Model: ${{ inputs.model }}"
+          echo "Analysis Depth: ${{ inputs.analysis_depth }}"
+          echo "Config File: ${{ inputs.config_file }}"
+          echo "::endgroup::"
+
+          ./.github/scripts/run_repo_analyzer.sh \
+            "${{ inputs.repo_url }}" \
+            "${{ inputs.model }}" \
+            "${{ inputs.config_file }}" \
+            "${{ inputs.analysis_depth }}" \
+            2>&1 | tee logs/analysis.log
+
+      - name: Validate results
+        run: |
+          if [[ ! -d "output" ]] || [[ -z "$(ls -A output 2>/dev/null)" ]]; then
+            echo "Error: No analysis results were generated"
+            echo "Check the analysis log for errors:"
+            cat logs/analysis.log
+            exit 1
+          fi
+
+          echo "Analysis completed successfully!"
+          echo "Generated files:"
+          find output -type f -exec ls -la {} \;
+
+      - name: Generate summary
+        run: |
+          cat > output/analysis-summary.md << EOF
+          # Repository Analysis Summary
+
+          - **Repository:** ${{ inputs.repo_url }}
+          - **Owner:** ${{ needs.validate-inputs.outputs.repo_owner }}
+          - **Name:** ${{ needs.validate-inputs.outputs.repo_name }}
+          - **Model Used:** ${{ inputs.model }}
+          - **Analysis Depth:** ${{ inputs.analysis_depth }}
+          - **Analysis Time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ## Generated Files
+          $(find output -type f -name "*.json" -o -name "*.md" -o -name "*.txt" | sort)
+          EOF
+
+      - name: Upload analysis results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: analysis-results
-          path: output/
+          name: analysis-results-${{ needs.validate-inputs.outputs.repo_owner }}-${{ needs.validate-inputs.outputs.repo_name }}-${{ github.run_number }}
+          path: |
+            output/
+            logs/
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload logs on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: analysis-logs-failure-${{ github.run_number }}
+          path: logs/
           retention-days: 7
