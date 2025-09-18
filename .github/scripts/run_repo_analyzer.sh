@@ -120,20 +120,24 @@ if ! $CMD; then
 fi
 
 # Process and install technologies from results
+# First check in the OUTPUT_DIR
 OUTPUT_FILE=$(find "$OUTPUT_DIR" -name "*_latest.json" -type f | head -n 1)
+
+# If not found, check in owner-named directories (how repo_analyzer.py saves files)
+if [ -z "$OUTPUT_FILE" ]; then
+    # Try to find in any subdirectory
+    OUTPUT_FILE=$(find . -name "*_latest.json" -type f | head -n 1)
+fi
 if [ -f "$OUTPUT_FILE" ]; then
     chmod u+rw "$OUTPUT_FILE"
     log "Results: $OUTPUT_FILE"
     log "=== ANALYSIS SUMMARY ==="
     jq -r '.repository_analysis | "Architecture: \(.architecture_type)\nPrimary Tech: \(.primary_technology)\nTechnologies: \(.technology_stack | join(", "))"' "$OUTPUT_FILE" | tee -a "$LOG_FILE"
-    log "=== COMMANDS ==="
-    jq -r '.commands | to_entries | .[] | select(.value != "N/A") | "\(.key): \(.value)"' "$OUTPUT_FILE" | tee -a "$LOG_FILE"
-    log "===================="
 
-    # Extract technologies and build tools
-    TECHNOLOGIES=$(jq -r '.repository_analysis.technology_stack[]' "$OUTPUT_FILE")
-    PACKAGE_MANAGERS=$(jq -r '.build_ecosystem.package_managers[]' "$OUTPUT_FILE")
-    BUILD_TOOLS=$(jq -r '.build_ecosystem.build_tools[], .build_ecosystem.bundlers[]' "$OUTPUT_FILE")
+    # Extract technologies and build tools with null handling
+    TECHNOLOGIES=$(jq -r '.repository_analysis.technology_stack[]?' "$OUTPUT_FILE")
+    PACKAGE_MANAGERS=$(jq -r '.build_ecosystem.package_managers[]? // empty' "$OUTPUT_FILE")
+    BUILD_TOOLS=$(jq -r '(.build_ecosystem.build_tools[]? // empty), (.build_ecosystem.bundlers[]? // empty)' "$OUTPUT_FILE")
 
     # Install Java-related tools
     if echo "$TECHNOLOGIES" | grep -qi "java"; then
