@@ -97,18 +97,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          if [[ -f "requirements.txt" ]]; then
-            pip install -r requirements.txt
-          fi
-
       - name: Create output directories
         run: |
           mkdir -p output
@@ -126,36 +114,10 @@ jobs:
           fi
           chmod +x run_repo_analyzer.sh
 
-      - name: Validate API keys
-        run: |
-          MODEL="${{ inputs.model }}"
-          case "$MODEL" in
-            claude-sonnet|claude-*)
-              if [[ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]]; then
-                echo "Error: ANTHROPIC_API_KEY is required for Claude models"
-                exit 1
-              fi
-              ;;
-            gpt-*|openai-*)
-              if [[ -z "${{ secrets.OPENAI_API_KEY }}" ]]; then
-                echo "Error: OPENAI_API_KEY is required for OpenAI models"
-                exit 1
-              fi
-              ;;
-            gemini|google-*)
-              if [[ -z "${{ secrets.GOOGLE_API_KEY }}" ]]; then
-                echo "Error: GOOGLE_API_KEY is required for Google models"
-                exit 1
-              fi
-              ;;
-          esac
-
       - name: Run repository analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           set -euo pipefail
 
