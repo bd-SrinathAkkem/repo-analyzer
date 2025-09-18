@@ -129,36 +129,6 @@ jobs:
             "${{ inputs.analysis_depth }}" \
             2>&1 | tee logs/analysis.log
 
-      - name: Validate results
-        run: |
-          if [[ ! -d "output" ]] || [[ -z "$(ls -A output 2>/dev/null)" ]]; then
-            echo "Error: No analysis results were generated"
-            echo "Check the analysis log for errors:"
-            cat logs/analysis.log
-            exit 1
-          fi
-
-          echo "Analysis completed successfully!"
-          echo "Generated files:"
-          find output -type f -exec ls -la {} \;
-
-      - name: Generate summary
-        run: |
-          cat > output/analysis-summary.md << EOF
-          # Repository Analysis Summary
-
-          - **Repository:** ${{ inputs.repo_url }}
-          - **Owner:** ${{ needs.validate-inputs.outputs.repo_owner }}
-          - **Name:** ${{ needs.validate-inputs.outputs.repo_name }}
-          - **Model Used:** ${{ inputs.model }}
-          - **Analysis Depth:** ${{ inputs.analysis_depth }}
-          - **Analysis Time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          - **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          ## Generated Files
-          $(find output -type f -name "*.json" -o -name "*.md" -o -name "*.txt" | sort)
-          EOF
-
       - name: Upload analysis results
         uses: actions/upload-artifact@v4
         if: always()
