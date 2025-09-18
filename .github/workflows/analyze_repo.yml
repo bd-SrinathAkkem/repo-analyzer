@@ -1,0 +1,82 @@
+name: Analyze Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: 'GitHub Repository URL to analyze'
+        required: true
+      model:
+        description: 'AI model (e.g., claude-sonnet, gpt-4, gemini)'
+        default: 'claude-sonnet'
+      config_file:
+        description: 'Optional config file path (TOML/YAML/JSON)'
+        default: ''
+  workflow_call:
+    inputs:
+      repo_url:
+        description: 'GitHub Repository URL to analyze'
+        required: true
+        type: string
+      model:
+        description: 'AI model to use'
+        default: 'claude-sonnet'
+        type: string
+      config_file:
+        description: 'Optional config file path'
+        default: ''
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        description: 'GitHub token for API access'
+        required: false
+      ANTHROPIC_API_KEY:
+        description: 'Anthropic API key for Claude models'
+        required: false
+      OPENAI_API_KEY:
+        description: 'OpenAI API key for GPT models'
+        required: false
+      GOOGLE_API_KEY:
+        description: 'Google API key for Gemini models'
+        required: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y jq curl
+
+      - name: Create scripts directory
+        run: mkdir -p .github/scripts
+
+      - name: Copy analyzer script
+        run: |
+          curl -sSL "https://raw.githubusercontent.com/bd-SrinathAkkem/repo-analyzer/main/repo_analyzer.py" -o .github/scripts/repo_analyzer.py
+          chmod u+x .github/scripts/repo_analyzer.py
+
+      - name: Write runner script
+        run: |
+          mv run_repo_analyzer.sh .github/scripts/run_repo_analyzer.sh
+          chmod u+x .github/scripts/run_repo_analyzer.sh
+
+      - name: Run analyzer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: .github/scripts/run_repo_analyzer.sh "${{ inputs.repo_url }}" "${{ inputs.model }}" "${{ inputs.config_file }}"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: output/
+          retention-days: 7
