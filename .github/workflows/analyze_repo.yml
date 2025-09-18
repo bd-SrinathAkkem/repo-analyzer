@@ -46,9 +46,6 @@ on:
         default: 'standard'
         type: string
     secrets:
-      GITHUB_TOKEN:
-        description: 'GitHub token for API access'
-        required: false
       ANTHROPIC_API_KEY:
         description: 'Anthropic API key for Claude models'
         required: false
