@@ -1635,7 +1635,62 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no addit
         "maintenance": "General maintenance tasks"
     }},
     "environment_requirements": {{
-        "runtime_versions": {{"runtime": "version requirement"}},
+        "runtime_versions": {{
+            "java": "specific Java version required (e.g., '8', '11', '17', '21') or 'any'",
+            "node": "specific Node.js version required (e.g., '16.x', '18.x', '20.x', 'latest')",
+            "npm": "specific npm version required (e.g., '8.x', '9.x', '10.x') or 'latest'",
+            "python": "specific Python version required (e.g., '3.8', '3.9', '3.10', '3.11', '3.12') or 'latest'",
+            "pip": "specific pip version required or 'latest'",
+            "go": "specific Go version required (e.g., '1.19', '1.20', '1.21') or 'latest'",
+            "rust": "specific Rust version required (e.g., '1.70', 'stable', 'beta') or 'latest'",
+            "dotnet": "specific .NET version required (e.g., '6.0', '7.0', '8.0') or 'latest'",
+            "php": "specific PHP version required (e.g., '8.1', '8.2', '8.3') or 'latest'",
+            "ruby": "specific Ruby version required (e.g., '3.0', '3.1', '3.2') or 'latest'",
+            "kotlin": "specific Kotlin version required or 'latest'",
+            "scala": "specific Scala version required (e.g., '2.13', '3.x') or 'latest'"
+        }},
+        "build_files_available": {{
+            "has_maven_wrapper": "true if mvnw/mvnw.cmd exists, false otherwise",
+            "has_gradle_wrapper": "true if gradlew/gradlew.bat exists, false otherwise",
+            "has_npm_scripts": "true if package.json has scripts section",
+            "has_yarn_lock": "true if yarn.lock exists",
+            "has_pnpm_lock": "true if pnpm-lock.yaml exists",
+            "has_poetry": "true if pyproject.toml with poetry exists",
+            "has_pipenv": "true if Pipfile exists",
+            "has_requirements": "true if requirements.txt exists",
+            "has_setup_py": "true if setup.py exists",
+            "has_go_mod": "true if go.mod exists",
+            "has_cargo_toml": "true if Cargo.toml exists",
+            "has_composer_json": "true if composer.json exists",
+            "has_gemfile": "true if Gemfile exists",
+            "has_dotnet_proj": "true if .csproj/.fsproj/.vbproj files exist",
+            "maven_pom_location": "path to pom.xml file",
+            "gradle_build_location": "path to build.gradle file",
+            "package_json_location": "path to package.json file",
+            "go_mod_location": "path to go.mod file",
+            "cargo_toml_location": "path to Cargo.toml file",
+            "requirements_location": "path to requirements.txt file",
+            "dockerfile_location": "path to Dockerfile if present",
+            "makefile_location": "path to Makefile if present"
+        }},
+        "version_specifications": {{
+            "detected_from": ["list of files where version requirements were detected"],
+            "java_source_target": "Java source/target version from pom.xml or build.gradle",
+            "maven_compiler_version": "Maven compiler plugin version requirement",
+            "spring_boot_version": "Spring Boot version if detected",
+            "node_engines": "Node.js engines requirement from package.json",
+            "npm_engines": "npm version requirement from package.json engines",
+            "python_requires": "Python version from setup.py or pyproject.toml",
+            "poetry_python": "Python version requirement from pyproject.toml [tool.poetry.dependencies]",
+            "pipenv_python": "Python version from Pipfile",
+            "go_version": "Go version from go.mod file",
+            "rust_msrv": "Minimum Supported Rust Version from Cargo.toml",
+            "dotnet_target_framework": ".NET target framework from .csproj files",
+            "php_require": "PHP version from composer.json require",
+            "ruby_version": "Ruby version from Gemfile or .ruby-version",
+            "kotlin_version": "Kotlin version from build files",
+            "scala_version": "Scala version from build.sbt or build.gradle"
+        }},
         "system_dependencies": ["system-level packages required"],
         "environment_variables": ["required environment variables"],
         "optional_tools": ["recommended but not required tools"],
@@ -1676,13 +1731,74 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no addit
 
 CRITICAL REQUIREMENTS:
 1. All commands must be executable and tested-worthy
-2. Handle subdirectories with appropriate 'cd' prefixes when needed  
+2. Handle subdirectories with appropriate 'cd' prefixes when needed
 3. Provide specific version numbers where detectable
 4. Include both development and production scenarios
 5. Consider cross-platform compatibility (mention OS-specific commands when necessary)
 6. Be thorough but practical - focus on actionable insights
 7. Ensure JSON is perfectly valid with no syntax errors
 8. Do not include any text outside the JSON structure
+
+SPECIAL FOCUS ON VERSION DETECTION FOR ALL LANGUAGES:
+
+JAVA PROJECTS:
+- Examine pom.xml for <maven.compiler.source>, <maven.compiler.target>, <java.version>
+- Check build.gradle for sourceCompatibility, targetCompatibility, java toolchain
+- Check .java-version files, Dockerfile FROM openjdk:XX
+- Detect Spring Boot version from dependencies
+
+NODE.JS PROJECTS:
+- Check package.json "engines" field for Node.js and npm versions
+- Look for .nvmrc, .node-version files
+- Check package-lock.json or yarn.lock for version constraints
+- Examine Dockerfile FROM node:XX
+
+PYTHON PROJECTS:
+- Check setup.py python_requires, pyproject.toml python requirement
+- Look for .python-version, runtime.txt (Heroku), Pipfile python_version
+- Examine requirements.txt for specific package versions
+- Check Dockerfile FROM python:XX
+
+GO PROJECTS:
+- Parse go.mod for go directive (e.g., "go 1.20")
+- Check .go-version files
+- Look for Dockerfile FROM golang:XX
+
+RUST PROJECTS:
+- Check Cargo.toml [package] rust-version for MSRV
+- Look for rust-toolchain.toml or rust-toolchain files
+- Check .rustc_version files
+
+.NET PROJECTS:
+- Examine .csproj, .fsproj files for <TargetFramework>
+- Check global.json for SDK version requirements
+- Look for Dockerfile FROM mcr.microsoft.com/dotnet
+
+PHP PROJECTS:
+- Check composer.json require php version
+- Look for .php-version files
+- Check Dockerfile FROM php:XX
+
+RUBY PROJECTS:
+- Examine Gemfile ruby statement
+- Check .ruby-version, .rvmrc files
+- Look for Dockerfile FROM ruby:XX
+
+BUILD WRAPPER & TOOL DETECTION:
+- Maven: mvnw vs system mvn, wrapper generation capability
+- Gradle: gradlew vs system gradle
+- Node.js: npm vs yarn vs pnpm (check lock files)
+- Python: pip vs poetry vs pipenv (check pyproject.toml, Pipfile)
+- .NET: dotnet commands, package restore
+- PHP: composer vs system package managers
+- Ruby: bundler vs gem
+- Go: go mod vs GOPATH mode
+- Rust: cargo commands
+
+VERSION CONSTRAINT FILES:
+- .tool-versions (asdf), .envrc (direnv)
+- Docker files with specific base image versions
+- CI files (.github/workflows) with setup-* actions specifying versions
 
 Base your analysis on the actual files and structure provided, not generic assumptions.
 """
