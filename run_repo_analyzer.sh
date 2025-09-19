@@ -25,6 +25,9 @@ chmod -R u+rw logs
 log "Starting repository analysis"
 log "Parameters: REPO_URL=$REPO_URL, MODEL=$MODEL, CONFIG_FILE=$CONFIG_FILE"
 
+# Log execution context
+[ -n "$GITHUB_WORKSPACE" ] && log "GitHub Actions: $GITHUB_WORKSPACE" || log "Local: $(pwd)"
+
 # Validate input
 if [ -z "$REPO_URL" ]; then
     log "ERROR: REPO_URL is required"
@@ -185,6 +188,38 @@ mkdir -p "$OUTPUT_DIR"
 chmod -R u+rw "$OUTPUT_DIR"
 log "Output directory: $OUTPUT_DIR"
 
+# Setup repository directory
+setup_repo() {
+    if [ -n "$GITHUB_WORKSPACE" ]; then
+        REPO_DIR="$GITHUB_WORKSPACE"
+        log "Using workspace: $REPO_DIR"
+        return
+    fi
+
+    REPO_NAME=$(basename "$REPO_URL" .git)
+    REPO_OWNER=$(echo "$REPO_URL" | sed 's|.*/\([^/]*\)/[^/]*$|\1|')
+    REPO_DIR="./repos/$REPO_OWNER/$REPO_NAME"
+
+    if [ -d "$REPO_DIR" ]; then
+        [ -d "$REPO_DIR/.git" ] && (cd "$REPO_DIR" && git pull --quiet 2>/dev/null) || true
+        return
+    fi
+
+    mkdir -p "./repos/$REPO_OWNER"
+    if ! command -v git >/dev/null 2>&1; then
+        $PACKAGE_INSTALL git || { log "Failed to install git"; REPO_DIR=""; return; }
+    fi
+
+    if git clone --quiet "$REPO_URL" "$REPO_DIR" 2>/dev/null; then
+        log "✓ Repository cloned: $REPO_DIR"
+    else
+        log "WARNING: Clone failed, build commands may not work"
+        REPO_DIR=""
+    fi
+}
+
+setup_repo
+
 # Run analyzer
 log "Running analyzer for $REPO_URL..."
 CMD="$PYTHON_CMD $SCRIPT_NAME $REPO_URL $MODEL"
@@ -227,419 +262,85 @@ if [ -f "$OUTPUT_FILE" ]; then
 
 
 
-    # Universal version management functions for all languages
+    # Universal runtime installer
+    install_runtime() {
+        local lang="$1" version="$2" extra="$3"
+        [ -z "$version" ] || [ "$version" = "null" ] || [ "$version" = "latest" ] && return
 
-    # Node.js version management
-    check_and_install_node_version() {
-        local required_version="$1"
-        local required_npm="$2"
+        if command -v "${lang}" >/dev/null 2>&1 || command -v "${lang}c" >/dev/null 2>&1 || command -v "${lang}3" >/dev/null 2>&1; then
+            return  # Already installed, skip version check for optimization
+        fi
 
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking Node.js version requirement: $required_version"
-
-            if command -v node >/dev/null 2>&1; then
-                current_version=$(node --version | sed 's/v//')
-                major_version=$(echo "$current_version" | cut -d. -f1)
-                required_major=$(echo "$required_version" | sed 's/[.x]//g' | cut -d. -f1)
-
-                if [ "$major_version" != "$required_major" ]; then
-                    log "Installing Node.js $required_version..."
-                    install_node_version "$required_version"
+        case "$lang" in
+            "node")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL "node@${version%%.*}" 2>/dev/null || $PACKAGE_INSTALL node
+                    [ -d "/opt/homebrew/opt/node@${version%%.*}/bin" ] && export PATH="/opt/homebrew/opt/node@${version%%.*}/bin:$PATH"
+                else
+                    case "${version%%.*}" in
+                        16|18|20) curl -fsSL "https://deb.nodesource.com/setup_${version%%.*}.x" | bash - 2>/dev/null ;;
+                    esac
+                    $PACKAGE_INSTALL nodejs
                 fi
-            else
-                install_node_version "$required_version"
-            fi
-        fi
-
-        # Check npm version if specified
-        if [ -n "$required_npm" ] && [ "$required_npm" != "latest" ] && [ "$required_npm" != "null" ]; then
-            if command -v npm >/dev/null 2>&1; then
-                npm install -g npm@"$required_npm" 2>/dev/null || log "Failed to update npm to $required_npm"
-            fi
-        fi
-    }
-
-    install_node_version() {
-        local version="$1"
-        if [ "$OS_TYPE" = "macos" ]; then
-            # Use Homebrew to install specific Node version
-            case "$version" in
-                "16"*|"16.x")
-                    $PACKAGE_INSTALL node@16 || log "Failed to install Node.js 16"
-                    export PATH="/opt/homebrew/opt/node@16/bin:$PATH"
-                    ;;
-                "18"*|"18.x")
-                    $PACKAGE_INSTALL node@18 || log "Failed to install Node.js 18"
-                    export PATH="/opt/homebrew/opt/node@18/bin:$PATH"
-                    ;;
-                "20"*|"20.x")
-                    $PACKAGE_INSTALL node@20 || log "Failed to install Node.js 20"
-                    export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
-                    ;;
-                *)
-                    $PACKAGE_INSTALL node || log "Failed to install Node.js"
-                    ;;
-            esac
-        elif [ "$OS_TYPE" = "linux" ]; then
-            # Use NodeSource repository for specific versions
-            if command -v curl >/dev/null 2>&1; then
-                case "$version" in
-                    "16"*|"16.x")
-                        curl -fsSL https://deb.nodesource.com/setup_16.x | bash - || log "NodeSource setup failed"
-                        ;;
-                    "18"*|"18.x")
-                        curl -fsSL https://deb.nodesource.com/setup_18.x | bash - || log "NodeSource setup failed"
-                        ;;
-                    "20"*|"20.x")
-                        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || log "NodeSource setup failed"
-                        ;;
-                esac
-                $PACKAGE_INSTALL nodejs || log "Failed to install Node.js"
-            fi
-        fi
-    }
-
-    # Python version management
-    check_and_install_python_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking Python version requirement: $required_version"
-
-            if command -v python3 >/dev/null 2>&1; then
-                current_version=$(python3 --version 2>&1 | cut -d' ' -f2 | cut -d. -f1-2)
-
-                if [ "$current_version" != "$required_version" ]; then
-                    log "Installing Python $required_version..."
-                    install_python_version "$required_version"
+                [ -n "$extra" ] && npm install -g "npm@$extra" 2>/dev/null
+                ;;
+            "python")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL "python@$version" 2>/dev/null || $PACKAGE_INSTALL python
+                    [ -d "/opt/homebrew/opt/python@$version/bin" ] && export PATH="/opt/homebrew/opt/python@$version/bin:$PATH"
+                else
+                    $PACKAGE_INSTALL "python$version" "python$version-pip" "python$version-venv" 2>/dev/null
                 fi
-            else
-                install_python_version "$required_version"
-            fi
-        fi
-    }
-
-    install_python_version() {
-        local version="$1"
-        if [ "$OS_TYPE" = "macos" ]; then
-            case "$version" in
-                "3.8")
-                    $PACKAGE_INSTALL python@3.8 || log "Failed to install Python 3.8"
-                    export PATH="/opt/homebrew/opt/python@3.8/bin:$PATH"
-                    ;;
-                "3.9")
-                    $PACKAGE_INSTALL python@3.9 || log "Failed to install Python 3.9"
-                    export PATH="/opt/homebrew/opt/python@3.9/bin:$PATH"
-                    ;;
-                "3.10")
-                    $PACKAGE_INSTALL python@3.10 || log "Failed to install Python 3.10"
-                    export PATH="/opt/homebrew/opt/python@3.10/bin:$PATH"
-                    ;;
-                "3.11")
-                    $PACKAGE_INSTALL python@3.11 || log "Failed to install Python 3.11"
-                    export PATH="/opt/homebrew/opt/python@3.11/bin:$PATH"
-                    ;;
-                "3.12")
-                    $PACKAGE_INSTALL python@3.12 || log "Failed to install Python 3.12"
-                    export PATH="/opt/homebrew/opt/python@3.12/bin:$PATH"
-                    ;;
-            esac
-        elif [ "$OS_TYPE" = "linux" ]; then
-            case "$version" in
-                "3.8")
-                    $PACKAGE_INSTALL python3.8 python3.8-pip python3.8-venv || log "Failed to install Python 3.8"
-                    ;;
-                "3.9")
-                    $PACKAGE_INSTALL python3.9 python3.9-pip python3.9-venv || log "Failed to install Python 3.9"
-                    ;;
-                "3.10")
-                    $PACKAGE_INSTALL python3.10 python3.10-pip python3.10-venv || log "Failed to install Python 3.10"
-                    ;;
-                "3.11")
-                    $PACKAGE_INSTALL python3.11 python3.11-pip python3.11-venv || log "Failed to install Python 3.11"
-                    ;;
-                "3.12")
-                    $PACKAGE_INSTALL python3.12 python3.12-pip python3.12-venv || log "Failed to install Python 3.12"
-                    ;;
-            esac
-        fi
-    }
-
-    # Go version management
-    check_and_install_go_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking Go version requirement: $required_version"
-
-            if command -v go >/dev/null 2>&1; then
-                current_version=$(go version | cut -d' ' -f3 | sed 's/go//')
-                if [ "$current_version" != "$required_version" ]; then
-                    log "Installing Go $required_version..."
-                    install_go_version "$required_version"
+                ;;
+            "java")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL "openjdk@$version" 2>/dev/null || $PACKAGE_INSTALL openjdk
+                    [ -d "/opt/homebrew/opt/openjdk@$version/bin" ] && export PATH="/opt/homebrew/opt/openjdk@$version/bin:$PATH"
+                else
+                    $PACKAGE_INSTALL "openjdk-$version-jdk" 2>/dev/null
                 fi
-            else
-                install_go_version "$required_version"
-            fi
-        fi
-    }
-
-    install_go_version() {
-        local version="$1"
-        if [ "$OS_TYPE" = "macos" ]; then
-            $PACKAGE_INSTALL go || log "Failed to install Go"
-        elif [ "$OS_TYPE" = "linux" ]; then
-            # Download and install specific Go version
-            if command -v curl >/dev/null 2>&1; then
-                ARCH=$(uname -m)
-                case "$ARCH" in
-                    "x86_64") ARCH="amd64" ;;
-                    "aarch64") ARCH="arm64" ;;
-                esac
-
-                GO_URL="https://go.dev/dl/go${version}.linux-${ARCH}.tar.gz"
-                curl -L "$GO_URL" -o /tmp/go.tar.gz 2>/dev/null || log "Failed to download Go $version"
-
-                if [ -f "/tmp/go.tar.gz" ]; then
-                    rm -rf /usr/local/go 2>/dev/null
-                    tar -C /usr/local -xzf /tmp/go.tar.gz 2>/dev/null || log "Failed to extract Go"
-                    export PATH="/usr/local/go/bin:$PATH"
-                    rm -f /tmp/go.tar.gz
+                ;;
+            "go")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL go
+                else
+                    ARCH=$(uname -m); [ "$ARCH" = "x86_64" ] && ARCH="amd64"; [ "$ARCH" = "aarch64" ] && ARCH="arm64"
+                    curl -L "https://go.dev/dl/go${version}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz 2>/dev/null && \
+                    tar -C /usr/local -xzf /tmp/go.tar.gz 2>/dev/null && rm -f /tmp/go.tar.gz && export PATH="/usr/local/go/bin:$PATH"
                 fi
-            fi
-        fi
-    }
-
-    # Check for specific Java version requirements from analysis
-    check_and_install_java_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "any" ] && [ "$required_version" != "null" ]; then
-            log "Checking Java version requirement: $required_version"
-
-            if command -v java >/dev/null 2>&1; then
-                current_version=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
-                # Handle Java 1.8 format vs newer format
-                if [ "$current_version" = "1" ]; then
-                    current_version=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f2)
+                ;;
+            "rust")
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 2>/dev/null
+                export PATH="$HOME/.cargo/bin:$PATH"
+                ;;
+            "dotnet")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL dotnet
+                else
+                    curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --version "$version" 2>/dev/null
+                    export PATH="$HOME/.dotnet:$PATH"
                 fi
-
-                log "Current Java version: $current_version, Required: $required_version"
-
-                if [ "$current_version" != "$required_version" ]; then
-                    log "Installing Java $required_version..."
-
-                    if [ "$OS_TYPE" = "macos" ]; then
-                        # Use Homebrew to install specific Java version
-                        case "$required_version" in
-                            "8")
-                                $PACKAGE_INSTALL openjdk@8 || log "Failed to install Java 8"
-                                export PATH="/opt/homebrew/opt/openjdk@8/bin:$PATH"
-                                ;;
-                            "11")
-                                $PACKAGE_INSTALL openjdk@11 || log "Failed to install Java 11"
-                                export PATH="/opt/homebrew/opt/openjdk@11/bin:$PATH"
-                                ;;
-                            "17")
-                                $PACKAGE_INSTALL openjdk@17 || log "Failed to install Java 17"
-                                export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
-                                ;;
-                            "21")
-                                $PACKAGE_INSTALL openjdk@21 || log "Failed to install Java 21"
-                                export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
-                                ;;
-                            *)
-                                log "Unsupported Java version $required_version for macOS, keeping current"
-                                ;;
-                        esac
-                    elif [ "$OS_TYPE" = "linux" ]; then
-                        # Use system package manager for specific versions
-                        case "$required_version" in
-                            "8")
-                                $PACKAGE_INSTALL openjdk-8-jdk || log "Failed to install Java 8"
-                                ;;
-                            "11")
-                                $PACKAGE_INSTALL openjdk-11-jdk || log "Failed to install Java 11"
-                                ;;
-                            "17")
-                                $PACKAGE_INSTALL openjdk-17-jdk || log "Failed to install Java 17"
-                                ;;
-                            "21")
-                                $PACKAGE_INSTALL openjdk-21-jdk || log "Failed to install Java 21"
-                                ;;
-                            *)
-                                log "Unsupported Java version $required_version for Linux, keeping current"
-                                ;;
-                        esac
-                    fi
-
-                    # Verify installation
-                    if command -v java >/dev/null 2>&1; then
-                        log "✓ Updated Java: $(java -version 2>&1 | head -n 1)"
-                    fi
+                ;;
+            "php")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL "php@$version" 2>/dev/null || $PACKAGE_INSTALL php
+                    [ -d "/opt/homebrew/opt/php@$version/bin" ] && export PATH="/opt/homebrew/opt/php@$version/bin:$PATH"
+                else
+                    $PACKAGE_INSTALL php php-cli php-common
                 fi
-            fi
-        fi
-    }
-
-    # Rust version management
-    check_and_install_rust_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking Rust version requirement: $required_version"
-
-            if command -v rustc >/dev/null 2>&1; then
-                current_version=$(rustc --version | cut -d' ' -f2)
-                if [ "$current_version" != "$required_version" ]; then
-                    log "Installing Rust $required_version..."
-                    install_rust_version "$required_version"
+                command -v php >/dev/null 2>&1 && ! command -v composer >/dev/null 2>&1 && \
+                curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer 2>/dev/null
+                ;;
+            "ruby")
+                if [ "$OS_TYPE" = "macos" ]; then
+                    $PACKAGE_INSTALL "ruby@$version" 2>/dev/null || $PACKAGE_INSTALL ruby
+                    [ -d "/opt/homebrew/opt/ruby@$version/bin" ] && export PATH="/opt/homebrew/opt/ruby@$version/bin:$PATH"
+                else
+                    $PACKAGE_INSTALL ruby ruby-dev
                 fi
-            else
-                install_rust_version "$required_version"
-            fi
-        fi
-    }
-
-    install_rust_version() {
-        local version="$1"
-        if command -v curl >/dev/null 2>&1; then
-            # Use rustup to install specific Rust version
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || log "Failed to install rustup"
-            export PATH="$HOME/.cargo/bin:$PATH"
-
-            if [ "$version" != "stable" ] && [ "$version" != "latest" ]; then
-                rustup install "$version" || log "Failed to install Rust $version"
-                rustup default "$version" || log "Failed to set Rust $version as default"
-            fi
-        elif [ "$OS_TYPE" = "macos" ]; then
-            $PACKAGE_INSTALL rust || log "Failed to install Rust via Homebrew"
-        fi
-    }
-
-    # .NET version management
-    check_and_install_dotnet_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking .NET version requirement: $required_version"
-
-            if command -v dotnet >/dev/null 2>&1; then
-                # Check if required version is installed
-                if ! dotnet --list-sdks | grep -q "$required_version"; then
-                    log "Installing .NET $required_version..."
-                    install_dotnet_version "$required_version"
-                fi
-            else
-                install_dotnet_version "$required_version"
-            fi
-        fi
-    }
-
-    install_dotnet_version() {
-        local version="$1"
-        if [ "$OS_TYPE" = "macos" ]; then
-            $PACKAGE_INSTALL dotnet || log "Failed to install .NET"
-        elif [ "$OS_TYPE" = "linux" ]; then
-            # Install .NET using Microsoft's installation script
-            if command -v curl >/dev/null 2>&1; then
-                curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --version "$version" || log "Failed to install .NET $version"
-                export PATH="$HOME/.dotnet:$PATH"
-            fi
-        fi
-    }
-
-    # PHP version management
-    check_and_install_php_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking PHP version requirement: $required_version"
-
-            if command -v php >/dev/null 2>&1; then
-                current_version=$(php -v | head -n 1 | cut -d' ' -f2 | cut -d. -f1-2)
-                if [ "$current_version" != "$required_version" ]; then
-                    log "Installing PHP $required_version..."
-                    install_php_version "$required_version"
-                fi
-            else
-                install_php_version "$required_version"
-            fi
-        fi
-    }
-
-    install_php_version() {
-        local version="$1"
-        if [ "$OS_TYPE" = "macos" ]; then
-            case "$version" in
-                "8.1")
-                    $PACKAGE_INSTALL php@8.1 || log "Failed to install PHP 8.1"
-                    export PATH="/opt/homebrew/opt/php@8.1/bin:$PATH"
-                    ;;
-                "8.2")
-                    $PACKAGE_INSTALL php@8.2 || log "Failed to install PHP 8.2"
-                    export PATH="/opt/homebrew/opt/php@8.2/bin:$PATH"
-                    ;;
-                "8.3")
-                    $PACKAGE_INSTALL php || log "Failed to install PHP"
-                    ;;
-            esac
-        elif [ "$OS_TYPE" = "linux" ]; then
-            $PACKAGE_INSTALL php php-cli php-common || log "Failed to install PHP"
-        fi
-
-        # Install Composer if PHP is available
-        if command -v php >/dev/null 2>&1 && ! command -v composer >/dev/null 2>&1; then
-            log "Installing Composer..."
-            if command -v curl >/dev/null 2>&1; then
-                curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer 2>/dev/null || log "Failed to install Composer"
-            fi
-        fi
-    }
-
-    # Ruby version management
-    check_and_install_ruby_version() {
-        local required_version="$1"
-
-        if [ -n "$required_version" ] && [ "$required_version" != "latest" ] && [ "$required_version" != "null" ]; then
-            log "Checking Ruby version requirement: $required_version"
-
-            if command -v ruby >/dev/null 2>&1; then
-                current_version=$(ruby -v | cut -d' ' -f2 | cut -d. -f1-2)
-                if [ "$current_version" != "$required_version" ]; then
-                    log "Installing Ruby $required_version..."
-                    install_ruby_version "$required_version"
-                fi
-            else
-                install_ruby_version "$required_version"
-            fi
-        fi
-    }
-
-    install_ruby_version() {
-        local version="$1"
-        if [ "$OS_TYPE" = "macos" ]; then
-            case "$version" in
-                "3.0")
-                    $PACKAGE_INSTALL ruby@3.0 || log "Failed to install Ruby 3.0"
-                    export PATH="/opt/homebrew/opt/ruby@3.0/bin:$PATH"
-                    ;;
-                "3.1")
-                    $PACKAGE_INSTALL ruby@3.1 || log "Failed to install Ruby 3.1"
-                    export PATH="/opt/homebrew/opt/ruby@3.1/bin:$PATH"
-                    ;;
-                "3.2"|*)
-                    $PACKAGE_INSTALL ruby || log "Failed to install Ruby"
-                    ;;
-            esac
-        elif [ "$OS_TYPE" = "linux" ]; then
-            $PACKAGE_INSTALL ruby ruby-dev || log "Failed to install Ruby"
-        fi
-
-        # Install Bundler if Ruby is available
-        if command -v ruby >/dev/null 2>&1 && command -v gem >/dev/null 2>&1; then
-            gem install bundler 2>/dev/null || log "Failed to install Bundler"
-        fi
+                command -v gem >/dev/null 2>&1 && gem install bundler 2>/dev/null
+                ;;
+        esac
     }
 
     # Universal build wrapper and tool detection function
@@ -760,6 +461,13 @@ if [ -f "$OUTPUT_FILE" ]; then
     # Execute extracted build commands
     log "=== EXECUTING BUILD COMMANDS ==="
 
+    # Validate repository directory
+    if [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR" ]; then
+        log "✓ Repository: $REPO_DIR"
+    else
+        log "⚠️ No repository directory, using: $(pwd)"
+    fi
+
     # Check if we have analysis results with specific version requirements
     if command -v jq >/dev/null 2>&1 && [ -f "$OUTPUT_FILE" ]; then
         log "🔍 Checking version requirements from analysis..."
@@ -780,157 +488,103 @@ if [ -f "$OUTPUT_FILE" ]; then
         log "📦 Package managers found: $(echo "$PACKAGE_MANAGERS" | tr '\n' ' ')"
         log "🛠️ Installing only required language runtimes and tools..."
 
-        # Check Java projects
-        if echo "$TECHNOLOGIES" | grep -qi "java" || [ -n "$REQUIRED_JAVA_VERSION" ] && [ "$REQUIRED_JAVA_VERSION" != "null" ]; then
-            log "📦 Java detected - installing Java environment..."
-            check_and_install_java_version "$REQUIRED_JAVA_VERSION"
-        fi
-
-        # Check Node.js/JavaScript/TypeScript projects
-        if echo "$TECHNOLOGIES" | grep -qi "javascript\|typescript\|node" || echo "$PACKAGE_MANAGERS" | grep -qi "npm\|yarn\|pnpm" || [ -n "$REQUIRED_NODE_VERSION" ] && [ "$REQUIRED_NODE_VERSION" != "null" ]; then
-            log "📦 Node.js/JavaScript detected - installing Node.js environment..."
-            check_and_install_node_version "$REQUIRED_NODE_VERSION" "$REQUIRED_NPM_VERSION"
-        fi
-
-        # Check Python projects
-        if echo "$TECHNOLOGIES" | grep -qi "python" || echo "$PACKAGE_MANAGERS" | grep -qi "pip\|poetry\|pipenv" || [ -n "$REQUIRED_PYTHON_VERSION" ] && [ "$REQUIRED_PYTHON_VERSION" != "null" ]; then
-            log "📦 Python detected - installing Python environment..."
-            check_and_install_python_version "$REQUIRED_PYTHON_VERSION"
-        fi
-
-        # Check Go projects
-        if echo "$TECHNOLOGIES" | grep -qi "go\|golang" || echo "$PACKAGE_MANAGERS" | grep -qi "go-mod\|go mod" || [ -n "$REQUIRED_GO_VERSION" ] && [ "$REQUIRED_GO_VERSION" != "null" ]; then
-            log "📦 Go detected - installing Go environment..."
-            check_and_install_go_version "$REQUIRED_GO_VERSION"
-        fi
-
-        # Check Rust projects
-        if echo "$TECHNOLOGIES" | grep -qi "rust" || echo "$PACKAGE_MANAGERS" | grep -qi "cargo" || [ -n "$REQUIRED_RUST_VERSION" ] && [ "$REQUIRED_RUST_VERSION" != "null" ]; then
-            log "📦 Rust detected - installing Rust environment..."
-            check_and_install_rust_version "$REQUIRED_RUST_VERSION"
-        fi
-
-        # Check .NET projects
-        if echo "$TECHNOLOGIES" | grep -qi "\.net\|c#\|f#\|csharp\|fsharp" || echo "$PACKAGE_MANAGERS" | grep -qi "dotnet\|nuget" || [ -n "$REQUIRED_DOTNET_VERSION" ] && [ "$REQUIRED_DOTNET_VERSION" != "null" ]; then
-            log "📦 .NET detected - installing .NET environment..."
-            check_and_install_dotnet_version "$REQUIRED_DOTNET_VERSION"
-        fi
-
-        # Check PHP projects
-        if echo "$TECHNOLOGIES" | grep -qi "php" || echo "$PACKAGE_MANAGERS" | grep -qi "composer" || [ -n "$REQUIRED_PHP_VERSION" ] && [ "$REQUIRED_PHP_VERSION" != "null" ]; then
-            log "📦 PHP detected - installing PHP environment..."
-            check_and_install_php_version "$REQUIRED_PHP_VERSION"
-        fi
-
-        # Check Ruby projects
-        if echo "$TECHNOLOGIES" | grep -qi "ruby" || echo "$PACKAGE_MANAGERS" | grep -qi "gem\|bundler" || [ -n "$REQUIRED_RUBY_VERSION" ] && [ "$REQUIRED_RUBY_VERSION" != "null" ]; then
-            log "📦 Ruby detected - installing Ruby environment..."
-            check_and_install_ruby_version "$REQUIRED_RUBY_VERSION"
-        fi
-
-        log "⚡ Optimization: Only installing detected languages - skipping unnecessary runtime installations"
+        # Install detected runtimes
+        log "🔧 Installing required runtimes..."
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *java*) install_runtime "java" "$REQUIRED_JAVA_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *javascript*|*typescript*|*node*|*npm*|*yarn*|*pnpm*) install_runtime "node" "$REQUIRED_NODE_VERSION" "$REQUIRED_NPM_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *python*|*pip*|*poetry*|*pipenv*) install_runtime "python" "$REQUIRED_PYTHON_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *go*|*golang*|*"go mod"*|*go-mod*) install_runtime "go" "$REQUIRED_GO_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *rust*|*cargo*) install_runtime "rust" "$REQUIRED_RUST_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *.net*|*c#*|*f#*|*csharp*|*fsharp*|*dotnet*|*nuget*) install_runtime "dotnet" "$REQUIRED_DOTNET_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *php*|*composer*) install_runtime "php" "$REQUIRED_PHP_VERSION" ;;
+        esac
+        case "$TECHNOLOGIES $PACKAGE_MANAGERS" in
+            *ruby*|*gem*|*bundler*) install_runtime "ruby" "$REQUIRED_RUBY_VERSION" ;;
+        esac
 
         # Check for build files and attempt to create missing wrappers
         HAS_MAVEN_WRAPPER=$(jq -r '.environment_requirements.build_files_available.has_maven_wrapper // false' "$OUTPUT_FILE")
         POM_LOCATION=$(jq -r '.environment_requirements.build_files_available.maven_pom_location // empty' "$OUTPUT_FILE")
 
-        if [ -f "pom.xml" ] || [ -n "$POM_LOCATION" ]; then
-            if [ "$HAS_MAVEN_WRAPPER" = "false" ] && [ ! -f "./mvnw" ]; then
-                log "Maven project detected without wrapper, attempting to generate mvnw..."
-                if command -v mvn >/dev/null 2>&1; then
-                    mvn -N wrapper:wrapper 2>/dev/null || log "Failed to generate Maven wrapper"
-                    if [ -f "./mvnw" ]; then
-                        chmod +x ./mvnw
-                        log "✓ Generated Maven wrapper (mvnw)"
-                    fi
-                fi
-            fi
-        fi
+        # Generate missing build wrappers
+        generate_wrappers() {
+            local orig_dir=$(pwd)
+            [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR" ] && cd "$REPO_DIR"
 
-        # Generate summary of installed tools
-        log "📋 Environment Summary:"
-        command -v java >/dev/null 2>&1 && log "  ✓ Java: $(java -version 2>&1 | head -n 1)"
-        command -v node >/dev/null 2>&1 && log "  ✓ Node.js: $(node --version)"
-        command -v npm >/dev/null 2>&1 && log "  ✓ npm: $(npm --version)"
-        command -v python3 >/dev/null 2>&1 && log "  ✓ Python: $(python3 --version)"
-        command -v go >/dev/null 2>&1 && log "  ✓ Go: $(go version | cut -d' ' -f3)"
-        command -v rustc >/dev/null 2>&1 && log "  ✓ Rust: $(rustc --version | cut -d' ' -f2)"
-        command -v dotnet >/dev/null 2>&1 && log "  ✓ .NET: $(dotnet --version)"
-        command -v php >/dev/null 2>&1 && log "  ✓ PHP: $(php -v | head -n 1 | cut -d' ' -f2)"
-        command -v ruby >/dev/null 2>&1 && log "  ✓ Ruby: $(ruby -v | cut -d' ' -f2)"
+            # Maven wrapper
+            if [ -f "pom.xml" ] && [ ! -f "./mvnw" ] && command -v mvn >/dev/null 2>&1; then
+                mvn -N wrapper:wrapper 2>/dev/null && chmod +x ./mvnw 2>/dev/null && log "✓ Generated mvnw"
+            fi
+
+            # Gradle wrapper
+            if { [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; } && [ ! -f "./gradlew" ] && command -v gradle >/dev/null 2>&1; then
+                gradle wrapper 2>/dev/null && chmod +x ./gradlew 2>/dev/null && log "✓ Generated gradlew"
+            fi
+
+            cd "$orig_dir"
+        }
+
+        generate_wrappers
+
+        # Show installed tools
+        for tool in java:java node:node npm:npm python3:python go:go rustc:rust dotnet:dotnet php:php ruby:ruby; do
+            cmd=${tool%:*} name=${tool#*:}
+            command -v "$cmd" >/dev/null 2>&1 && log "  ✓ $name"
+        done
     fi
 
-    # Function to safely execute commands with build wrapper fixes
+    # Execute commands in repository directory
     execute_command() {
-        local cmd="$1"
-        local desc="$2"
-        if [ -n "$cmd" ] && [ "$cmd" != "null" ]; then
-            # Fix build wrapper issues
-            local fixed_cmd=$(fix_build_wrapper "$cmd")
+        local cmd="$1" desc="$2"
+        [ -z "$cmd" ] || [ "$cmd" = "null" ] && { log "Skipping $desc (no command)"; return; }
 
-            log "Executing $desc: $fixed_cmd"
-            if [ "$fixed_cmd" != "$cmd" ]; then
-                log "  (Fixed from: $cmd)"
-            fi
+        local fixed_cmd=$(fix_build_wrapper "$cmd")
+        local orig_dir=$(pwd)
 
-            if eval "$fixed_cmd"; then
-                log "✓ $desc completed successfully"
-            else
-                local exit_code=$?
-                log "✗ $desc failed (exit code: $exit_code)"
+        log "Executing $desc: $fixed_cmd"
+        [ "$fixed_cmd" != "$cmd" ] && log "  (Fixed from: $cmd)"
 
-                # Try fallback strategies for common failures
-                if echo "$fixed_cmd" | grep -q "mvn\|maven" && [ $exit_code -eq 127 ]; then
-                    log "Attempting to install Maven and retry..."
-                    if [ "$OS_TYPE" = "macos" ]; then
-                        $PACKAGE_INSTALL maven
-                    elif [ "$OS_TYPE" = "linux" ]; then
-                        $PACKAGE_INSTALL maven
-                    fi
-                    if command -v mvn >/dev/null 2>&1; then
-                        log "Retrying with Maven now available..."
-                        if eval "$fixed_cmd"; then
-                            log "✓ $desc completed successfully on retry"
-                            return 0
-                        fi
-                    fi
-                fi
+        # Execute in repository directory if available
+        [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR" ] && cd "$REPO_DIR"
 
-                return $exit_code
-            fi
+        if eval "$fixed_cmd"; then
+            log "✓ $desc completed"
         else
-            log "Skipping $desc (no command found)"
+            local exit_code=$?
+            log "✗ $desc failed (exit $exit_code)"
+
+            # Retry with Maven installation if command not found
+            if echo "$fixed_cmd" | grep -q "mvn" && [ $exit_code -eq 127 ]; then
+                log "Installing Maven and retrying..."
+                $PACKAGE_INSTALL maven && command -v mvn >/dev/null 2>&1 && eval "$fixed_cmd" && log "✓ $desc completed on retry"
+            fi
         fi
+
+        cd "$orig_dir"
     }
 
-    # Execute commands in logical order
-    if [ -n "$CLEAN_INSTALL_CMD" ] && [ "$CLEAN_INSTALL_CMD" != "null" ]; then
-        execute_command "$CLEAN_INSTALL_CMD" "clean install"
-    elif [ -n "$INSTALL_CMD" ] && [ "$INSTALL_CMD" != "null" ]; then
-        execute_command "$INSTALL_CMD" "dependency installation"
-    fi
-
-    # Build commands (try development first, then production)
-    if [ -n "$BUILD_DEV_CMD" ] && [ "$BUILD_DEV_CMD" != "null" ]; then
-        execute_command "$BUILD_DEV_CMD" "development build"
-    elif [ -n "$BUILD_PROD_CMD" ] && [ "$BUILD_PROD_CMD" != "null" ]; then
-        execute_command "$BUILD_PROD_CMD" "production build"
-    fi
-
-    # Optional: Start development server (commented out by default as it runs indefinitely)
-    # if [ -n "$START_DEV_CMD" ] && [ "$START_DEV_CMD" != "null" ]; then
-    #     log "Development server command available: $START_DEV_CMD"
-    #     log "To start development server, run: $START_DEV_CMD"
-    # fi
+    # Execute build commands
+    [ -n "$CLEAN_INSTALL_CMD" ] && [ "$CLEAN_INSTALL_CMD" != "null" ] && execute_command "$CLEAN_INSTALL_CMD" "clean install"
+    [ -z "$CLEAN_INSTALL_CMD" ] && [ -n "$INSTALL_CMD" ] && [ "$INSTALL_CMD" != "null" ] && execute_command "$INSTALL_CMD" "install"
+    [ -n "$BUILD_DEV_CMD" ] && [ "$BUILD_DEV_CMD" != "null" ] && execute_command "$BUILD_DEV_CMD" "build"
+    [ -z "$BUILD_DEV_CMD" ] && [ -n "$BUILD_PROD_CMD" ] && [ "$BUILD_PROD_CMD" != "null" ] && execute_command "$BUILD_PROD_CMD" "build"
 
 else
     log "WARNING: No output found in $OUTPUT_DIR"
 fi
 
-log "=== EXECUTION SUMMARY ==="
-log "Analysis and setup completed successfully"
-if [ -n "$START_DEV_CMD" ] && [ "$START_DEV_CMD" != "null" ]; then
-    log "To start development server: $START_DEV_CMD"
-fi
-log "Scan complete"
-exit 0
+log "✓ Analysis complete"
+[ -n "$START_DEV_CMD" ] && [ "$START_DEV_CMD" != "null" ] && log "Dev server: $START_DEV_CMD"
