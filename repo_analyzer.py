@@ -27,7 +27,7 @@ Dependencies:
 
 Environment Variables Required:
     - GITHUB_TOKEN: GitHub Personal Access Token (recommended)
-    - One of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
+    - AI_API_KEY: Single API key used for all AI providers
 
 Usage:
     python repo_analyzer.py <github_repo_url> [model] [config_file]
@@ -111,12 +111,8 @@ class Constants:
     GITHUB_API_TIMEOUT = 30  # Timeout for GitHub API calls in seconds
     GITHUB_RATE_LIMIT_BUFFER = 10  # Buffer for rate limit (requests remaining)
     
-    # AI API configuration
-    API_KEY_MAP = {
-        'claude': 'ANTHROPIC_API_KEY',
-        'gpt': 'OPENAI_API_KEY',
-        'gemini': 'GOOGLE_API_KEY'
-    }
+    # AI API configuration - Single key for all providers
+    AI_API_KEY_ENV = 'AI_API_KEY'
 
     BASE_URL = 'https://llm.labs.blackduck.com'
     API_BASE_URLS = {
@@ -350,42 +346,32 @@ class UniversalRepoAnalyzer:
 
     def _get_api_key_for_model(self) -> str:
         """
-        Get the API key for the selected model from environment variables.
+        Get the universal AI API key from environment variable.
 
         Returns:
-            str: API key for the selected model
-            
+            str: AI API key for all providers
+
         Raises:
-            ConfigurationError: If the required API key is not set
-            
+            ConfigurationError: If the AI API key is not set
+
         Note:
-            Maps model prefixes to their corresponding environment variables:
-            - claude* -> ANTHROPIC_API_KEY
-            - gpt* -> OPENAI_API_KEY  
-            - gemini* -> GOOGLE_API_KEY
+            Uses a single AI_API_KEY environment variable for all AI providers.
+            This simplifies configuration while supporting all models.
         """
-        # Determine API key prefix based on model name
-        prefix = 'claude'  # Default to claude
-        for key_prefix in Constants.API_KEY_MAP.keys():
-            if self.model.startswith(key_prefix):
-                prefix = key_prefix
-                break
-        
-        env_var = Constants.API_KEY_MAP[prefix]
-        api_key = os.getenv(env_var)
-        
+        api_key = os.getenv(Constants.AI_API_KEY_ENV)
+
         if not api_key:
-            logger.error(f"Required environment variable {env_var} not set for model {self.model}")
+            logger.error(f"Required environment variable {Constants.AI_API_KEY_ENV} not set")
             raise ConfigurationError(
-                f"{env_var} not set in environment. "
-                f"Required for model {self.model}. "
-                f"Please set this environment variable with your API key."
+                f"{Constants.AI_API_KEY_ENV} not set in environment. "
+                f"Please set this environment variable with your API key. "
+                f"This single key will be used for all AI models ({self.model})."
             )
-        
+
         # Validate API key format (basic check)
         if len(api_key.strip()) < 10:
-            logger.warning(f"API key for {env_var} seems too short. Please verify.")
-        
+            logger.warning(f"API key seems too short. Please verify your {Constants.AI_API_KEY_ENV}.")
+
         return api_key
 
     def _get_base_url_for_model(self) -> str:
@@ -394,36 +380,28 @@ class UniversalRepoAnalyzer:
 
         Returns:
             str: Base URL for the selected model
-            
+
         Note:
             Priority order:
-            1. Configuration file setting
-            2. Environment variable (e.g., CLAUDE_API_BASE_URL)
-            3. Default hardcoded URL
+            1. Configuration file setting for 'base_url'
+            2. Environment variable AI_API_BASE_URL
+            3. Default hardcoded URL (same for all models)
         """
-        # Determine URL prefix based on model name
-        prefix = 'claude'  # Default to claude
-        for url_prefix in Constants.API_BASE_URLS.keys():
-            if self.model.startswith(url_prefix):
-                prefix = url_prefix
-                break
-
         # Check configuration file first
         config_urls = self.config.get('api_base_urls', {})
-        if prefix in config_urls:
-            logger.info(f"Using base URL from config for {prefix}: {config_urls[prefix]}")
-            return config_urls[prefix]
+        if 'base_url' in config_urls:
+            logger.info(f"Using base URL from config: {config_urls['base_url']}")
+            return config_urls['base_url']
 
         # Check environment variable
-        env_var = f"{prefix.upper()}{Constants.API_BASE_URL_ENV_PREFIX}"
-        env_url = os.getenv(env_var)
+        env_url = os.getenv('AI_API_BASE_URL')
         if env_url:
-            logger.info(f"Using base URL from environment {env_var}: {env_url}")
+            logger.info(f"Using base URL from environment AI_API_BASE_URL: {env_url}")
             return env_url
 
-        # Use default
-        default_url = Constants.API_BASE_URLS[prefix]
-        logger.info(f"Using default base URL for {prefix}: {default_url}")
+        # Use default (same for all models)
+        default_url = Constants.BASE_URL
+        logger.info(f"Using default base URL: {default_url}")
         return default_url
 
     def _load_config(self, config_file: Optional[str]) -> Dict[str, Any]:
@@ -1863,21 +1841,17 @@ def validate_environment() -> Dict[str, Any]:
     # Check environment variables
     env_vars_to_check = [
         Constants.GITHUB_TOKEN_ENV,
-        'ANTHROPIC_API_KEY',
-        'OPENAI_API_KEY', 
-        'GOOGLE_API_KEY'
+        Constants.AI_API_KEY_ENV
     ]
-    
+
     for env_var in env_vars_to_check:
         value = os.getenv(env_var)
         validation_results['environment_variables'][env_var] = 'set' if value else 'not set'
-        
-    # Check if at least one AI API key is available
-    ai_keys_available = any(
-        os.getenv(key) for key in Constants.API_KEY_MAP.values()
-    )
-    if not ai_keys_available:
-        validation_results['errors'].append("No AI API keys found in environment")
+
+    # Check if AI API key is available
+    ai_key_available = bool(os.getenv(Constants.AI_API_KEY_ENV))
+    if not ai_key_available:
+        validation_results['errors'].append(f"AI API key not found. Please set {Constants.AI_API_KEY_ENV} environment variable")
     
     # GitHub token warning
     if not os.getenv(Constants.GITHUB_TOKEN_ENV):
@@ -1925,14 +1899,14 @@ EXAMPLES:
     python {sys.argv[0]} https://github.com/google/go gpt-4 my_config.toml
 
 ENVIRONMENT VARIABLES:
-    Required (at least one):
-    ANTHROPIC_API_KEY    Claude API key
-    OPENAI_API_KEY       OpenAI GPT API key  
-    GOOGLE_API_KEY       Google Gemini API key
+    Required:
+    AI_API_KEY           Universal AI API key for all providers
+                        Works with Claude, OpenAI GPT, and Google Gemini models
 
     Optional:
     GITHUB_TOKEN         GitHub Personal Access Token (recommended)
                         Without this, rate limits apply (60 vs 5000 requests/hour)
+    AI_API_BASE_URL      Custom API base URL (default: https://llm.labs.blackduck.com)
 
 OUTPUT:
     Analysis results are saved to: <owner>/<repo>_<timestamp>.json
@@ -1951,7 +1925,7 @@ CONFIGURATION:
     categories = ["setup", "build", "test", "deploy"]
     
     [api_base_urls]
-    claude = "https://custom-claude-endpoint.com/v1"
+    base_url = "https://custom-ai-endpoint.com/v1"
 
 SUPPORT:
     Repository: https://github.com/SrinathAkkem/repo-analyzer

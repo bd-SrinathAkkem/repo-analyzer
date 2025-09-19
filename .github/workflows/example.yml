@@ -1,0 +1,65 @@
+name: Repository Analysis Example
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository_url:
+        description: 'Repository URL to analyze'
+        required: true
+        type: string
+        default: 'https://github.com/facebook/react'
+      ai_model:
+        description: 'AI model to use'
+        required: false
+        type: choice
+        options:
+          - claude-sonnet
+          - gpt-4
+          - gemini-pro
+        default: 'claude-sonnet'
+
+jobs:
+  analyze-repository:
+    runs-on: ubuntu-latest
+    name: Analyze Repository with AI
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run AI Repository Analyzer
+        id: analyzer
+        uses: ./  # Use local action for testing, replace with 'bd-SrinathAkkem/repo-analyzer@v1' when published
+        with:
+          repo_url: ${{ inputs.repository_url }}
+          model: ${{ inputs.ai_model }}
+          ai_api_key: ${{ secrets.AI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display Results
+        run: |
+          echo "## Analysis Results" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ inputs.repository_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Architecture:** ${{ steps.analyzer.outputs.architecture }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Technologies:** ${{ steps.analyzer.outputs.technologies }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Analysis File:** ${{ steps.analyzer.outputs.analysis_file }}" >> $GITHUB_STEP_SUMMARY
+
+          echo ""
+          echo "## 🔧 Detected Technologies and Tools"
+          echo "Architecture: ${{ steps.analyzer.outputs.architecture }}"
+          echo "Technologies: ${{ steps.analyzer.outputs.technologies }}"
+
+          echo ""
+          echo "## 🚀 Build Commands Available"
+          echo '${{ steps.analyzer.outputs.build_commands }}' | jq -r 'to_entries[] | "**\(.key)**: \(.value)"'
+
+          echo ""
+          echo "## 📁 Analysis Output"
+          echo "Full analysis available in: ${{ steps.analyzer.outputs.analysis_file }}"
+
+      - name: Upload Analysis Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: ${{ steps.analyzer.outputs.analysis_file }}
+          retention-days: 30

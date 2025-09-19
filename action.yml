@@ -1,0 +1,46 @@
+name: 'AI Repository Analyzer'
+description: 'Analyze repositories using AI to detect technologies, architecture, and build commands'
+author: 'bd-SrinathAkkem'
+
+branding:
+  icon: 'search'
+  color: 'blue'
+
+inputs:
+  repo_url:
+    description: 'GitHub repository URL to analyze'
+    required: true
+  model:
+    description: 'AI model to use (claude-sonnet, gpt-4, etc.)'
+    required: false
+    default: 'claude-sonnet'
+  config_file:
+    description: 'Path to configuration file'
+    required: false
+  ai_api_key:
+    description: 'Universal AI API key for all AI providers (Claude, OpenAI, Gemini)'
+    required: true
+  github_token:
+    description: 'GitHub token for private repositories'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  analysis_file:
+    description: 'Path to the generated analysis JSON file'
+  technologies:
+    description: 'Comma-separated list of detected technologies'
+  architecture:
+    description: 'Detected architecture type'
+  build_commands:
+    description: 'JSON object containing extracted build commands'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  env:
+    REPO_URL: ${{ inputs.repo_url }}
+    MODEL: ${{ inputs.model }}
+    CONFIG_FILE: ${{ inputs.config_file }}
+    AI_API_KEY: ${{ inputs.ai_api_key }}
+    GITHUB_TOKEN: ${{ inputs.github_token }}

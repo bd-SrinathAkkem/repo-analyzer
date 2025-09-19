@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# Universal AI-Powered Repository Analyzer Runner for CI/CD (macOS)
+# Universal AI-Powered Repository Analyzer Runner for CI/CD
 # Runs repo_analyzer.py, processes results, and installs detected technologies
 # Usage: ./run_repo_analyzer.sh <github_repo_url> [model] [config_file]
+# Supports both macOS (with Homebrew) and Linux (Ubuntu/Debian) environments
 
 set -e
 
@@ -30,26 +31,68 @@ if [ -z "$REPO_URL" ]; then
     exit 1
 fi
 
-# Check for Homebrew
-if ! command -v brew >/dev/null 2>&1; then
-    log "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    eval "$(/opt/homebrew/bin/brew shellenv)" || eval "$(/usr/local/bin/brew shellenv)"
+# Detect OS and set up package manager
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux - assume Ubuntu/Debian in Docker
+    OS_TYPE="linux"
+    log "Detected Linux environment"
+
+    # Update package manager
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq
+        PACKAGE_INSTALL="apt-get install -y"
+    elif command -v yum >/dev/null 2>&1; then
+        PACKAGE_INSTALL="yum install -y"
+    else
+        log "WARNING: No supported package manager found"
+        PACKAGE_INSTALL="echo 'Package install not available:'"
+    fi
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    OS_TYPE="macos"
+    log "Detected macOS environment"
+
+    # Check for Homebrew
+    if ! command -v brew >/dev/null 2>&1; then
+        log "Installing Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        eval "$(/opt/homebrew/bin/brew shellenv)" || eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    log "Homebrew: $(brew --version | head -n 1)"
+    PACKAGE_INSTALL="brew install"
+else
+    OS_TYPE="unknown"
+    log "WARNING: Unknown OS type: $OSTYPE"
+    PACKAGE_INSTALL="echo 'Package install not available:'"
 fi
-log "Homebrew: $(brew --version | head -n 1)"
 
 # Check Python 3.8+
-if ! command -v python3.12 >/dev/null 2>&1; then
-    log "Python 3.12 not found. Trying python3..."
+if command -v python3 >/dev/null 2>&1; then
     PYTHON_CMD=python3
-    if ! command -v python3 >/dev/null 2>&1 || ! python3 --version | grep -q "3.[89]\|3.1[0-2]"; then
-        log "Installing Python 3.12 via Homebrew..."
-        brew install python@3.12
-        PYTHON_CMD=python3.12
-    fi
+    PYTHON_VERSION=$(python3 --version 2>&1 | grep -o '[0-9]\+\.[0-9]\+')
+    log "Found Python: $(python3 --version)"
 else
-    PYTHON_CMD=python3.12
+    log "Python 3 not found, attempting installation..."
+    if [ "$OS_TYPE" = "linux" ]; then
+        $PACKAGE_INSTALL python3 python3-pip python3-venv
+        PYTHON_CMD=python3
+    elif [ "$OS_TYPE" = "macos" ]; then
+        $PACKAGE_INSTALL python@3.12
+        PYTHON_CMD=python3.12
+    else
+        log "ERROR: Cannot install Python on unknown OS"
+        exit 1
+    fi
 fi
+
+# Ensure pip is available
+if ! command -v pip3 >/dev/null 2>&1 && ! $PYTHON_CMD -m pip --version >/dev/null 2>&1; then
+    log "pip not found, attempting installation..."
+    if [ "$OS_TYPE" = "linux" ]; then
+        $PACKAGE_INSTALL python3-pip
+    fi
+fi
+
 log "Using Python: $($PYTHON_CMD --version)"
 
 # Set up virtual environment
@@ -75,23 +118,26 @@ done
 # Install jq
 if ! command -v jq >/dev/null 2>&1; then
     log "Installing jq..."
-    brew install jq
-fi
-log "jq: $(jq --version)"
-
-# Verify API keys
-API_KEYS=("ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GOOGLE_API_KEY")
-API_KEY_SET=false
-for key in "${API_KEYS[@]}"; do
-    if [ -n "${!key}" ]; then
-        API_KEY_SET=true
-        log "$key is set"
+    if [ "$OS_TYPE" = "linux" ]; then
+        $PACKAGE_INSTALL jq
+    elif [ "$OS_TYPE" = "macos" ]; then
+        $PACKAGE_INSTALL jq
+    else
+        log "WARNING: Cannot install jq on unknown OS"
     fi
-done
-if [ "$API_KEY_SET" = false ]; then
-    log "ERROR: At least one API key required"
+fi
+if command -v jq >/dev/null 2>&1; then
+    log "jq: $(jq --version)"
+else
+    log "WARNING: jq not available"
+fi
+
+# Verify API key
+if [ -z "$AI_API_KEY" ]; then
+    log "ERROR: AI_API_KEY is required for all AI providers"
     exit 2
 fi
+log "Universal AI_API_KEY is set"
 [ -z "$GITHUB_TOKEN" ] && log "WARNING: GITHUB_TOKEN not set"
 
 # Ensure analyzer script exists
@@ -151,39 +197,63 @@ if [ -f "$OUTPUT_FILE" ]; then
 
     # Install Java-related tools
     if echo "$TECHNOLOGIES" | grep -qi "java"; then
-        log "Installing Java (JDK 17) and Maven..."
+        log "Installing Java (JDK) and Maven..."
         if ! command -v java >/dev/null 2>&1; then
-            brew install openjdk@17
-            export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+            if [ "$OS_TYPE" = "linux" ]; then
+                $PACKAGE_INSTALL openjdk-17-jdk
+            elif [ "$OS_TYPE" = "macos" ]; then
+                $PACKAGE_INSTALL openjdk@17
+                export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+            fi
         fi
         if ! command -v mvn >/dev/null 2>&1 && echo "$PACKAGE_MANAGERS" | grep -qi "maven"; then
-            brew install maven
+            if [ "$OS_TYPE" = "linux" ]; then
+                $PACKAGE_INSTALL maven
+            elif [ "$OS_TYPE" = "macos" ]; then
+                $PACKAGE_INSTALL maven
+            fi
         fi
-        log "Java: $(java -version 2>&1 | head -n 1)"
-        [ -n "$(command -v mvn)" ] && log "Maven: $(mvn -version | head -n 1)"
+        if command -v java >/dev/null 2>&1; then
+            log "Java: $(java -version 2>&1 | head -n 1)"
+        fi
+        if command -v mvn >/dev/null 2>&1; then
+            log "Maven: $(mvn -version | head -n 1)"
+        fi
     fi
 
     # Install Node.js-related tools
     if echo "$TECHNOLOGIES" | grep -qi "javascript\|typescript\|node.js"; then
-        log "Installing Node.js 20 and npm..."
+        log "Installing Node.js and npm..."
         if ! command -v node >/dev/null 2>&1; then
-            brew install node@20
-            export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+            if [ "$OS_TYPE" = "linux" ]; then
+                # Install Node.js via NodeSource repository for latest version
+                curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+                $PACKAGE_INSTALL nodejs
+            elif [ "$OS_TYPE" = "macos" ]; then
+                $PACKAGE_INSTALL node@20
+                export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+            fi
         fi
-        log "Node.js: $(node --version)"
-        log "npm: $(npm --version)"
-        if echo "$PACKAGE_MANAGERS" | grep -qi "yarn"; then
-            log "Installing Yarn..."
-            npm install -g yarn
-            log "Yarn: $(yarn --version)"
+        if command -v node >/dev/null 2>&1; then
+            log "Node.js: $(node --version)"
         fi
-        if echo "$BUILD_TOOLS" | grep -qi "webpack"; then
-            log "Installing Webpack..."
-            npm install -g webpack webpack-cli
-        fi
-        if echo "$BUILD_TOOLS" | grep -qi "vite"; then
-            log "Installing Vite..."
-            npm install -g vite
+        if command -v npm >/dev/null 2>&1; then
+            log "npm: $(npm --version)"
+            if echo "$PACKAGE_MANAGERS" | grep -qi "yarn"; then
+                log "Installing Yarn..."
+                npm install -g yarn
+                if command -v yarn >/dev/null 2>&1; then
+                    log "Yarn: $(yarn --version)"
+                fi
+            fi
+            if echo "$BUILD_TOOLS" | grep -qi "webpack"; then
+                log "Installing Webpack..."
+                npm install -g webpack webpack-cli
+            fi
+            if echo "$BUILD_TOOLS" | grep -qi "vite"; then
+                log "Installing Vite..."
+                npm install -g vite
+            fi
         fi
     fi
 
@@ -200,20 +270,34 @@ if [ -f "$OUTPUT_FILE" ]; then
     if echo "$TECHNOLOGIES" | grep -qi "go"; then
         log "Installing Go..."
         if ! command -v go >/dev/null 2>&1; then
-            brew install go
+            if [ "$OS_TYPE" = "linux" ]; then
+                $PACKAGE_INSTALL golang-go
+            elif [ "$OS_TYPE" = "macos" ]; then
+                $PACKAGE_INSTALL go
+            fi
         fi
-        log "Go: $(go version)"
+        if command -v go >/dev/null 2>&1; then
+            log "Go: $(go version)"
+        fi
     fi
 
     # Install Rust-related tools
     if echo "$TECHNOLOGIES" | grep -qi "rust"; then
         log "Installing Rust..."
         if ! command -v rustc >/dev/null 2>&1; then
-            brew install rust
-            export PATH="$HOME/.cargo/bin:$PATH"
+            if [ "$OS_TYPE" = "linux" ]; then
+                # Install Rust via rustup (official installer)
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                export PATH="$HOME/.cargo/bin:$PATH"
+            elif [ "$OS_TYPE" = "macos" ]; then
+                $PACKAGE_INSTALL rust
+                export PATH="$HOME/.cargo/bin:$PATH"
+            fi
         fi
-        log "Rust: $(rustc --version)"
-        if echo "$PACKAGE_MANAGERS" | grep -qi "cargo"; then
+        if command -v rustc >/dev/null 2>&1; then
+            log "Rust: $(rustc --version)"
+        fi
+        if command -v cargo >/dev/null 2>&1; then
             log "Cargo: $(cargo --version)"
         fi
     fi
