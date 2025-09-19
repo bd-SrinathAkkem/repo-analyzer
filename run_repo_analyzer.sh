@@ -224,149 +224,8 @@ if [ -f "$OUTPUT_FILE" ]; then
     BUILD_PROD_CMD=$(jq -r '.commands.build_production // empty' "$OUTPUT_FILE")
     START_DEV_CMD=$(jq -r '.commands.start_development // empty' "$OUTPUT_FILE")
 
-    # Install Java-related tools
-    if echo "$TECHNOLOGIES" | grep -qi "java"; then
-        log "Setting up Java environment..."
 
-        if ! command -v java >/dev/null 2>&1; then
-            log "Java not found, attempting installation..."
-            if [ "$OS_TYPE" = "linux" ]; then
-                $PACKAGE_INSTALL openjdk-17-jdk || log "Failed to install Java via package manager"
-            elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL openjdk@17 || log "Failed to install Java via Homebrew"
-                # Try to set PATH for Homebrew Java
-                if [ -d "/opt/homebrew/opt/openjdk@17/bin" ]; then
-                    export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
-                fi
-            fi
-        fi
 
-        if ! command -v mvn >/dev/null 2>&1 && echo "$PACKAGE_MANAGERS" | grep -qi "maven"; then
-            log "Maven not found, attempting installation..."
-            if [ "$OS_TYPE" = "linux" ]; then
-                $PACKAGE_INSTALL maven || log "Failed to install Maven via package manager"
-            elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL maven || log "Failed to install Maven via Homebrew"
-            fi
-        fi
-
-        # Report what we have available
-        if command -v java >/dev/null 2>&1; then
-            log "✓ Java: $(java -version 2>&1 | head -n 1)"
-        else
-            log "⚠️  Java not available (build commands may fail)"
-        fi
-
-        if command -v mvn >/dev/null 2>&1; then
-            log "✓ Maven: $(mvn -version | head -n 1)"
-        else
-            log "⚠️  Maven not available (Maven commands will be skipped)"
-        fi
-    fi
-
-    # Install Node.js-related tools
-    if echo "$TECHNOLOGIES" | grep -qi "javascript\|typescript\|node.js"; then
-        log "Setting up Node.js environment..."
-
-        if ! command -v node >/dev/null 2>&1; then
-            log "Node.js not found, attempting installation..."
-            if [ "$OS_TYPE" = "linux" ]; then
-                # Try to install Node.js via NodeSource repository for latest version
-                if command -v curl >/dev/null 2>&1 && [ "$EUID" -eq 0 ] || command -v sudo >/dev/null 2>&1; then
-                    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || log "NodeSource setup failed"
-                    $PACKAGE_INSTALL nodejs || log "Failed to install Node.js via package manager"
-                else
-                    log "Cannot install Node.js - no curl or sudo access"
-                fi
-            elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL node@20 || log "Failed to install Node.js via Homebrew"
-                # Try to set PATH for Homebrew Node
-                if [ -d "/opt/homebrew/opt/node@20/bin" ]; then
-                    export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
-                fi
-            fi
-        fi
-
-        # Report what we have and install additional tools
-        if command -v node >/dev/null 2>&1; then
-            log "✓ Node.js: $(node --version)"
-
-            if command -v npm >/dev/null 2>&1; then
-                log "✓ npm: $(npm --version)"
-
-                # Install Yarn if detected
-                if echo "$PACKAGE_MANAGERS" | grep -qi "yarn" && ! command -v yarn >/dev/null 2>&1; then
-                    log "Installing Yarn..."
-                    npm install -g yarn 2>/dev/null || log "Failed to install Yarn globally"
-                fi
-
-                # Install build tools if detected
-                if echo "$BUILD_TOOLS" | grep -qi "webpack"; then
-                    log "Installing Webpack globally..."
-                    npm install -g webpack webpack-cli 2>/dev/null || log "Failed to install Webpack globally"
-                fi
-
-                if echo "$BUILD_TOOLS" | grep -qi "vite"; then
-                    log "Installing Vite globally..."
-                    npm install -g vite 2>/dev/null || log "Failed to install Vite globally"
-                fi
-
-                # Report additional tools
-                if command -v yarn >/dev/null 2>&1; then
-                    log "✓ Yarn: $(yarn --version)"
-                fi
-            else
-                log "⚠️  npm not available"
-            fi
-        else
-            log "⚠️  Node.js not available (JavaScript/TypeScript build commands may fail)"
-        fi
-    fi
-
-    # Install Python-related tools
-    if echo "$TECHNOLOGIES" | grep -qi "python" && echo "$PACKAGE_MANAGERS" | grep -qi "pip"; then
-        log "Installing additional Python tools (if specified)..."
-        if jq -r '.features.has_tests' "$OUTPUT_FILE" | grep -qi "true"; then
-            pip install pytest
-            log "pytest installed"
-        fi
-    fi
-
-    # Install Go-related tools
-    if echo "$TECHNOLOGIES" | grep -qi "go"; then
-        log "Installing Go..."
-        if ! command -v go >/dev/null 2>&1; then
-            if [ "$OS_TYPE" = "linux" ]; then
-                $PACKAGE_INSTALL golang-go
-            elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL go
-            fi
-        fi
-        if command -v go >/dev/null 2>&1; then
-            log "Go: $(go version)"
-        fi
-    fi
-
-    # Install Rust-related tools
-    if echo "$TECHNOLOGIES" | grep -qi "rust"; then
-        log "Installing Rust..."
-        if ! command -v rustc >/dev/null 2>&1; then
-            if [ "$OS_TYPE" = "linux" ]; then
-                # Install Rust via rustup (official installer)
-                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                export PATH="$HOME/.cargo/bin:$PATH"
-            elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL rust
-                export PATH="$HOME/.cargo/bin:$PATH"
-            fi
-        fi
-        if command -v rustc >/dev/null 2>&1; then
-            log "Rust: $(rustc --version)"
-        fi
-        if command -v cargo >/dev/null 2>&1; then
-            log "Cargo: $(cargo --version)"
-        fi
-    fi
 
     # Universal version management functions for all languages
 
@@ -791,14 +650,14 @@ if [ -f "$OUTPUT_FILE" ]; then
         # Java Build Tools
         # Handle missing Maven wrapper
         if echo "$cmd" | grep -q "./mvnw" && [ ! -f "./mvnw" ]; then
-            log "⚠️ Maven wrapper (mvnw) not found, using system Maven"
+            log "⚠️ Maven wrapper (mvnw) not found, using system Maven" >&2
             fixed_cmd=$(echo "$cmd" | sed 's|./mvnw|mvn|g')
             ensure_tool_available "mvn" "maven"
         fi
 
         # Handle missing Gradle wrapper
         if echo "$cmd" | grep -q "./gradlew" && [ ! -f "./gradlew" ]; then
-            log "⚠️ Gradle wrapper (gradlew) not found, using system Gradle"
+            log "⚠️ Gradle wrapper (gradlew) not found, using system Gradle" >&2
             fixed_cmd=$(echo "$cmd" | sed 's|./gradlew|gradle|g')
             ensure_tool_available "gradle" "gradle"
         fi
@@ -807,7 +666,7 @@ if [ -f "$OUTPUT_FILE" ]; then
         # Handle yarn vs npm
         if echo "$cmd" | grep -q "yarn " && ! command -v yarn >/dev/null 2>&1; then
             if [ -f "package-lock.json" ]; then
-                log "⚠️ Yarn not available but package-lock.json found, using npm"
+                log "⚠️ Yarn not available but package-lock.json found, using npm" >&2
                 fixed_cmd=$(echo "$cmd" | sed 's|yarn |npm |g' | sed 's|yarn$|npm|g')
             else
                 ensure_tool_available "yarn" "yarn"
@@ -817,15 +676,15 @@ if [ -f "$OUTPUT_FILE" ]; then
         # Handle pnpm
         if echo "$cmd" | grep -q "pnpm " && ! command -v pnpm >/dev/null 2>&1; then
             if [ -f "package-lock.json" ]; then
-                log "⚠️ pnpm not available, using npm"
+                log "⚠️ pnpm not available, using npm" >&2
                 fixed_cmd=$(echo "$cmd" | sed 's|pnpm |npm |g')
             elif [ -f "yarn.lock" ]; then
-                log "⚠️ pnpm not available, using yarn"
+                log "⚠️ pnpm not available, using yarn" >&2
                 fixed_cmd=$(echo "$cmd" | sed 's|pnpm |yarn |g')
             else
-                log "Installing pnpm..."
+                log "Installing pnpm..." >&2
                 if command -v npm >/dev/null 2>&1; then
-                    npm install -g pnpm 2>/dev/null || log "Failed to install pnpm"
+                    npm install -g pnpm 2>/dev/null || log "Failed to install pnpm" >&2
                 fi
             fi
         fi
@@ -834,7 +693,7 @@ if [ -f "$OUTPUT_FILE" ]; then
         # Handle poetry
         if echo "$cmd" | grep -q "poetry " && ! command -v poetry >/dev/null 2>&1; then
             if [ -f "requirements.txt" ]; then
-                log "⚠️ Poetry not available, using pip with requirements.txt"
+                log "⚠️ Poetry not available, using pip with requirements.txt" >&2
                 fixed_cmd=$(echo "$cmd" | sed 's|poetry install|pip install -r requirements.txt|g')
             else
                 ensure_tool_available "poetry" "poetry"
@@ -844,7 +703,7 @@ if [ -f "$OUTPUT_FILE" ]; then
         # Handle pipenv
         if echo "$cmd" | grep -q "pipenv " && ! command -v pipenv >/dev/null 2>&1; then
             if [ -f "requirements.txt" ]; then
-                log "⚠️ Pipenv not available, using pip with requirements.txt"
+                log "⚠️ Pipenv not available, using pip with requirements.txt" >&2
                 fixed_cmd=$(echo "$cmd" | sed 's|pipenv install|pip install -r requirements.txt|g')
             else
                 ensure_tool_available "pipenv" "pipenv"
@@ -874,7 +733,7 @@ if [ -f "$OUTPUT_FILE" ]; then
         # Ruby Bundler handling
         if echo "$cmd" | grep -q "bundle " && ! command -v bundle >/dev/null 2>&1; then
             if command -v gem >/dev/null 2>&1; then
-                gem install bundler 2>/dev/null || log "Failed to install bundler"
+                gem install bundler 2>/dev/null || log "Failed to install bundler" >&2
             else
                 ensure_tool_available "ruby" "ruby"
             fi
@@ -889,11 +748,11 @@ if [ -f "$OUTPUT_FILE" ]; then
         local package="$2"
 
         if ! command -v "$tool" >/dev/null 2>&1; then
-            log "Installing $tool..."
+            log "Installing $tool..." >&2
             if [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL "$package" || log "Failed to install $package"
+                $PACKAGE_INSTALL "$package" || log "Failed to install $package" >&2
             elif [ "$OS_TYPE" = "linux" ]; then
-                $PACKAGE_INSTALL "$package" || log "Failed to install $package"
+                $PACKAGE_INSTALL "$package" || log "Failed to install $package" >&2
             fi
         fi
     }
@@ -916,15 +775,60 @@ if [ -f "$OUTPUT_FILE" ]; then
         REQUIRED_PHP_VERSION=$(jq -r '.environment_requirements.runtime_versions.php // empty' "$OUTPUT_FILE")
         REQUIRED_RUBY_VERSION=$(jq -r '.environment_requirements.runtime_versions.ruby // empty' "$OUTPUT_FILE")
 
-        # Install required versions for all detected languages
-        check_and_install_java_version "$REQUIRED_JAVA_VERSION"
-        check_and_install_node_version "$REQUIRED_NODE_VERSION" "$REQUIRED_NPM_VERSION"
-        check_and_install_python_version "$REQUIRED_PYTHON_VERSION"
-        check_and_install_go_version "$REQUIRED_GO_VERSION"
-        check_and_install_rust_version "$REQUIRED_RUST_VERSION"
-        check_and_install_dotnet_version "$REQUIRED_DOTNET_VERSION"
-        check_and_install_php_version "$REQUIRED_PHP_VERSION"
-        check_and_install_ruby_version "$REQUIRED_RUBY_VERSION"
+        # Install required versions only for detected languages
+        log "🔧 Analyzing detected technologies: $(echo "$TECHNOLOGIES" | tr '\n' ' ')"
+        log "📦 Package managers found: $(echo "$PACKAGE_MANAGERS" | tr '\n' ' ')"
+        log "🛠️ Installing only required language runtimes and tools..."
+
+        # Check Java projects
+        if echo "$TECHNOLOGIES" | grep -qi "java" || [ -n "$REQUIRED_JAVA_VERSION" ] && [ "$REQUIRED_JAVA_VERSION" != "null" ]; then
+            log "📦 Java detected - installing Java environment..."
+            check_and_install_java_version "$REQUIRED_JAVA_VERSION"
+        fi
+
+        # Check Node.js/JavaScript/TypeScript projects
+        if echo "$TECHNOLOGIES" | grep -qi "javascript\|typescript\|node" || echo "$PACKAGE_MANAGERS" | grep -qi "npm\|yarn\|pnpm" || [ -n "$REQUIRED_NODE_VERSION" ] && [ "$REQUIRED_NODE_VERSION" != "null" ]; then
+            log "📦 Node.js/JavaScript detected - installing Node.js environment..."
+            check_and_install_node_version "$REQUIRED_NODE_VERSION" "$REQUIRED_NPM_VERSION"
+        fi
+
+        # Check Python projects
+        if echo "$TECHNOLOGIES" | grep -qi "python" || echo "$PACKAGE_MANAGERS" | grep -qi "pip\|poetry\|pipenv" || [ -n "$REQUIRED_PYTHON_VERSION" ] && [ "$REQUIRED_PYTHON_VERSION" != "null" ]; then
+            log "📦 Python detected - installing Python environment..."
+            check_and_install_python_version "$REQUIRED_PYTHON_VERSION"
+        fi
+
+        # Check Go projects
+        if echo "$TECHNOLOGIES" | grep -qi "go\|golang" || echo "$PACKAGE_MANAGERS" | grep -qi "go-mod\|go mod" || [ -n "$REQUIRED_GO_VERSION" ] && [ "$REQUIRED_GO_VERSION" != "null" ]; then
+            log "📦 Go detected - installing Go environment..."
+            check_and_install_go_version "$REQUIRED_GO_VERSION"
+        fi
+
+        # Check Rust projects
+        if echo "$TECHNOLOGIES" | grep -qi "rust" || echo "$PACKAGE_MANAGERS" | grep -qi "cargo" || [ -n "$REQUIRED_RUST_VERSION" ] && [ "$REQUIRED_RUST_VERSION" != "null" ]; then
+            log "📦 Rust detected - installing Rust environment..."
+            check_and_install_rust_version "$REQUIRED_RUST_VERSION"
+        fi
+
+        # Check .NET projects
+        if echo "$TECHNOLOGIES" | grep -qi "\.net\|c#\|f#\|csharp\|fsharp" || echo "$PACKAGE_MANAGERS" | grep -qi "dotnet\|nuget" || [ -n "$REQUIRED_DOTNET_VERSION" ] && [ "$REQUIRED_DOTNET_VERSION" != "null" ]; then
+            log "📦 .NET detected - installing .NET environment..."
+            check_and_install_dotnet_version "$REQUIRED_DOTNET_VERSION"
+        fi
+
+        # Check PHP projects
+        if echo "$TECHNOLOGIES" | grep -qi "php" || echo "$PACKAGE_MANAGERS" | grep -qi "composer" || [ -n "$REQUIRED_PHP_VERSION" ] && [ "$REQUIRED_PHP_VERSION" != "null" ]; then
+            log "📦 PHP detected - installing PHP environment..."
+            check_and_install_php_version "$REQUIRED_PHP_VERSION"
+        fi
+
+        # Check Ruby projects
+        if echo "$TECHNOLOGIES" | grep -qi "ruby" || echo "$PACKAGE_MANAGERS" | grep -qi "gem\|bundler" || [ -n "$REQUIRED_RUBY_VERSION" ] && [ "$REQUIRED_RUBY_VERSION" != "null" ]; then
+            log "📦 Ruby detected - installing Ruby environment..."
+            check_and_install_ruby_version "$REQUIRED_RUBY_VERSION"
+        fi
+
+        log "⚡ Optimization: Only installing detected languages - skipping unnecessary runtime installations"
 
         # Check for build files and attempt to create missing wrappers
         HAS_MAVEN_WRAPPER=$(jq -r '.environment_requirements.build_files_available.has_maven_wrapper // false' "$OUTPUT_FILE")
