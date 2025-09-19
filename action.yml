@@ -36,11 +36,57 @@ outputs:
     description: 'JSON object containing extracted build commands'
 
 runs:
-  using: 'docker'
-  image: 'Dockerfile'
-  env:
-    REPO_URL: ${{ inputs.repo_url }}
-    MODEL: ${{ inputs.model }}
-    CONFIG_FILE: ${{ inputs.config_file }}
-    AI_API_KEY: ${{ inputs.ai_api_key }}
-    GITHUB_TOKEN: ${{ inputs.github_token }}
+  using: 'composite'
+  steps:
+    - name: Set up environment
+      shell: bash
+      run: |
+        echo "REPO_URL=${{ inputs.repo_url }}" >> $GITHUB_ENV
+        echo "MODEL=${{ inputs.model }}" >> $GITHUB_ENV
+        echo "CONFIG_FILE=${{ inputs.config_file }}" >> $GITHUB_ENV
+        echo "AI_API_KEY=${{ inputs.ai_api_key }}" >> $GITHUB_ENV
+        echo "GITHUB_TOKEN=${{ inputs.github_token }}" >> $GITHUB_ENV
+        echo "OUTPUT_DIR=$GITHUB_WORKSPACE/output" >> $GITHUB_ENV
+
+    - name: Run Repository Analyzer
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        chmod +x run_repo_analyzer.sh
+        ./run_repo_analyzer.sh "${{ inputs.repo_url }}" "${{ inputs.model }}" "${{ inputs.config_file }}"
+
+    - name: Set outputs
+      shell: bash
+      run: |
+        # Find the output file
+        OUTPUT_FILE=$(find "$OUTPUT_DIR" -name "*_latest.json" -type f 2>/dev/null | head -n 1)
+        if [ -z "$OUTPUT_FILE" ]; then
+          OUTPUT_FILE=$(find ${{ github.action_path }} -name "*_latest.json" -type f 2>/dev/null | head -n 1)
+        fi
+        if [ -z "$OUTPUT_FILE" ]; then
+          OUTPUT_FILE=$(find . -name "*_latest.json" -type f 2>/dev/null | head -n 1)
+        fi
+
+        if [ -f "$OUTPUT_FILE" ]; then
+          echo "analysis_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+
+          # Extract and set additional outputs using jq or fallback
+          if command -v jq >/dev/null 2>&1; then
+            TECHNOLOGIES=$(jq -r '.repository_analysis.technology_stack | join(",")' "$OUTPUT_FILE" 2>/dev/null || echo "")
+            ARCHITECTURE=$(jq -r '.repository_analysis.architecture_type // "unknown"' "$OUTPUT_FILE" 2>/dev/null || echo "unknown")
+            BUILD_COMMANDS=$(jq -c '.commands // {}' "$OUTPUT_FILE" 2>/dev/null || echo "{}")
+          else
+            TECHNOLOGIES=""
+            ARCHITECTURE="unknown"
+            BUILD_COMMANDS="{}"
+          fi
+
+          echo "technologies=$TECHNOLOGIES" >> $GITHUB_OUTPUT
+          echo "architecture=$ARCHITECTURE" >> $GITHUB_OUTPUT
+          echo "build_commands<<EOF" >> $GITHUB_OUTPUT
+          echo "$BUILD_COMMANDS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        else
+          echo "::error::No analysis output file found"
+          exit 1
+        fi

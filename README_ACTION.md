@@ -6,13 +6,19 @@ A GitHub Action that uses AI to analyze repositories and detect technologies, ar
 
 ### Basic Usage
 
+**Works on any runner type:**
+- ✅ **Linux** (ubuntu-latest, ubuntu-20.04, etc.)
+- ✅ **macOS** (macos-latest, self-hosted macOS ARM)
+- ✅ **Windows** (windows-latest)
+- ✅ **Self-hosted runners** (all platforms)
+
 ```yaml
 name: Analyze Repository
 on: [push]
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # or macos-latest, self-hosted, etc.
     steps:
       - uses: bd-SrinathAkkem/repo-analyzer@v1
         with:
@@ -81,6 +87,43 @@ You need one universal AI API key that works with all providers:
 2. Add as repository secret: `AI_API_KEY`
 
 Note: The same `AI_API_KEY` will work with all supported models (claude-sonnet, gpt-4, gemini-pro, etc.)
+
+## Self-Hosted Runner Support
+
+This action is **fully compatible with self-hosted runners** including:
+
+### macOS ARM Runners (Apple Silicon)
+```yaml
+jobs:
+  analyze:
+    runs-on: self-hosted  # Your macOS ARM runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bd-SrinathAkkem/repo-analyzer@v1
+        with:
+          repo_url: 'https://github.com/bd-SrinathAkkem/WebGoat'
+          ai_api_key: ${{ secrets.AI_API_KEY }}  # Single universal key
+```
+
+### What Gets Installed Automatically
+
+The action will detect your platform and install necessary tools:
+
+**On macOS:**
+- Homebrew (if not present)
+- Python packages via pip
+- Technology-specific tools (Java, Node.js, Go, Rust) as detected
+
+**On Linux:**
+- System packages via apt/yum (with sudo if available)
+- Python packages via pip
+- Technology-specific tools as detected
+
+**Graceful Handling:**
+- ✅ Works even if package installation fails
+- ⚠️ Provides warnings for missing tools
+- 🔧 Continues analysis with available tools
+- 📝 Clear logging of what succeeded/failed
 
 ## Example Workflow Files
 

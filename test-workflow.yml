@@ -1,0 +1,48 @@
+name: Test Repository Analyzer
+on:
+  workflow_dispatch:
+    inputs:
+      repository_url:
+        description: 'Repository URL to analyze'
+        required: true
+        type: string
+        default: 'https://github.com/bd-SrinathAkkem/WebGoat'
+
+jobs:
+  test-analyzer:
+    runs-on: self-hosted  # Your macOS ARM runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run AI Repository Analyzer
+        id: analyzer
+        uses: ./  # Use local action for testing
+        with:
+          repo_url: ${{ inputs.repository_url }}
+          model: 'claude-sonnet'
+          ai_api_key: ${{ secrets.AI_API_KEY }}  # Use AI_API_KEY not ANTHROPIC_API_KEY
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display Results
+        run: |
+          echo "## 🎉 Analysis Complete!"
+          echo "**Repository:** ${{ inputs.repository_url }}"
+          echo "**Architecture:** ${{ steps.analyzer.outputs.architecture }}"
+          echo "**Technologies:** ${{ steps.analyzer.outputs.technologies }}"
+          echo "**Analysis File:** ${{ steps.analyzer.outputs.analysis_file }}"
+
+          echo ""
+          echo "## 🔧 Build Commands Available"
+          if command -v jq >/dev/null 2>&1; then
+            echo '${{ steps.analyzer.outputs.build_commands }}' | jq -r 'to_entries[] | "**\(.key)**: \(.value)"'
+          else
+            echo '${{ steps.analyzer.outputs.build_commands }}'
+          fi
+
+      - name: Upload Analysis Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: ${{ steps.analyzer.outputs.analysis_file }}
+          retention-days: 30

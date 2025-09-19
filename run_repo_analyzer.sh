@@ -37,12 +37,26 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     OS_TYPE="linux"
     log "Detected Linux environment"
 
-    # Update package manager
+    # Update package manager (only if running as root or with sudo)
     if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq
-        PACKAGE_INSTALL="apt-get install -y"
+        if [ "$EUID" -eq 0 ]; then
+            apt-get update -qq
+            PACKAGE_INSTALL="apt-get install -y"
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            PACKAGE_INSTALL="sudo apt-get install -y"
+        else
+            log "WARNING: Cannot install packages - no root access or sudo"
+            PACKAGE_INSTALL="echo 'Package install not available (no sudo):'"
+        fi
     elif command -v yum >/dev/null 2>&1; then
-        PACKAGE_INSTALL="yum install -y"
+        if [ "$EUID" -eq 0 ]; then
+            PACKAGE_INSTALL="yum install -y"
+        elif command -v sudo >/dev/null 2>&1; then
+            PACKAGE_INSTALL="sudo yum install -y"
+        else
+            PACKAGE_INSTALL="echo 'Package install not available (no sudo):'"
+        fi
     else
         log "WARNING: No supported package manager found"
         PACKAGE_INSTALL="echo 'Package install not available:'"
@@ -54,12 +68,27 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
 
     # Check for Homebrew
     if ! command -v brew >/dev/null 2>&1; then
-        log "Installing Homebrew..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        eval "$(/opt/homebrew/bin/brew shellenv)" || eval "$(/usr/local/bin/brew shellenv)"
+        log "Homebrew not found. Attempting to install..."
+        if command -v curl >/dev/null 2>&1; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || log "Homebrew installation failed"
+            # Try to source brew paths
+            if [ -f "/opt/homebrew/bin/brew" ]; then
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+            elif [ -f "/usr/local/bin/brew" ]; then
+                eval "$(/usr/local/bin/brew shellenv)"
+            fi
+        else
+            log "WARNING: curl not available, cannot install Homebrew"
+        fi
     fi
-    log "Homebrew: $(brew --version | head -n 1)"
-    PACKAGE_INSTALL="brew install"
+
+    if command -v brew >/dev/null 2>&1; then
+        log "Homebrew: $(brew --version | head -n 1)"
+        PACKAGE_INSTALL="brew install"
+    else
+        log "WARNING: Homebrew not available, package installation will be limited"
+        PACKAGE_INSTALL="echo 'Homebrew not available:'"
+    fi
 else
     OS_TYPE="unknown"
     log "WARNING: Unknown OS type: $OSTYPE"
@@ -197,63 +226,100 @@ if [ -f "$OUTPUT_FILE" ]; then
 
     # Install Java-related tools
     if echo "$TECHNOLOGIES" | grep -qi "java"; then
-        log "Installing Java (JDK) and Maven..."
+        log "Setting up Java environment..."
+
         if ! command -v java >/dev/null 2>&1; then
+            log "Java not found, attempting installation..."
             if [ "$OS_TYPE" = "linux" ]; then
-                $PACKAGE_INSTALL openjdk-17-jdk
+                $PACKAGE_INSTALL openjdk-17-jdk || log "Failed to install Java via package manager"
             elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL openjdk@17
-                export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+                $PACKAGE_INSTALL openjdk@17 || log "Failed to install Java via Homebrew"
+                # Try to set PATH for Homebrew Java
+                if [ -d "/opt/homebrew/opt/openjdk@17/bin" ]; then
+                    export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+                fi
             fi
         fi
+
         if ! command -v mvn >/dev/null 2>&1 && echo "$PACKAGE_MANAGERS" | grep -qi "maven"; then
+            log "Maven not found, attempting installation..."
             if [ "$OS_TYPE" = "linux" ]; then
-                $PACKAGE_INSTALL maven
+                $PACKAGE_INSTALL maven || log "Failed to install Maven via package manager"
             elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL maven
+                $PACKAGE_INSTALL maven || log "Failed to install Maven via Homebrew"
             fi
         fi
+
+        # Report what we have available
         if command -v java >/dev/null 2>&1; then
-            log "Java: $(java -version 2>&1 | head -n 1)"
+            log "✓ Java: $(java -version 2>&1 | head -n 1)"
+        else
+            log "⚠️  Java not available (build commands may fail)"
         fi
+
         if command -v mvn >/dev/null 2>&1; then
-            log "Maven: $(mvn -version | head -n 1)"
+            log "✓ Maven: $(mvn -version | head -n 1)"
+        else
+            log "⚠️  Maven not available (Maven commands will be skipped)"
         fi
     fi
 
     # Install Node.js-related tools
     if echo "$TECHNOLOGIES" | grep -qi "javascript\|typescript\|node.js"; then
-        log "Installing Node.js and npm..."
+        log "Setting up Node.js environment..."
+
         if ! command -v node >/dev/null 2>&1; then
+            log "Node.js not found, attempting installation..."
             if [ "$OS_TYPE" = "linux" ]; then
-                # Install Node.js via NodeSource repository for latest version
-                curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-                $PACKAGE_INSTALL nodejs
+                # Try to install Node.js via NodeSource repository for latest version
+                if command -v curl >/dev/null 2>&1 && [ "$EUID" -eq 0 ] || command -v sudo >/dev/null 2>&1; then
+                    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || log "NodeSource setup failed"
+                    $PACKAGE_INSTALL nodejs || log "Failed to install Node.js via package manager"
+                else
+                    log "Cannot install Node.js - no curl or sudo access"
+                fi
             elif [ "$OS_TYPE" = "macos" ]; then
-                $PACKAGE_INSTALL node@20
-                export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
-            fi
-        fi
-        if command -v node >/dev/null 2>&1; then
-            log "Node.js: $(node --version)"
-        fi
-        if command -v npm >/dev/null 2>&1; then
-            log "npm: $(npm --version)"
-            if echo "$PACKAGE_MANAGERS" | grep -qi "yarn"; then
-                log "Installing Yarn..."
-                npm install -g yarn
-                if command -v yarn >/dev/null 2>&1; then
-                    log "Yarn: $(yarn --version)"
+                $PACKAGE_INSTALL node@20 || log "Failed to install Node.js via Homebrew"
+                # Try to set PATH for Homebrew Node
+                if [ -d "/opt/homebrew/opt/node@20/bin" ]; then
+                    export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
                 fi
             fi
-            if echo "$BUILD_TOOLS" | grep -qi "webpack"; then
-                log "Installing Webpack..."
-                npm install -g webpack webpack-cli
+        fi
+
+        # Report what we have and install additional tools
+        if command -v node >/dev/null 2>&1; then
+            log "✓ Node.js: $(node --version)"
+
+            if command -v npm >/dev/null 2>&1; then
+                log "✓ npm: $(npm --version)"
+
+                # Install Yarn if detected
+                if echo "$PACKAGE_MANAGERS" | grep -qi "yarn" && ! command -v yarn >/dev/null 2>&1; then
+                    log "Installing Yarn..."
+                    npm install -g yarn 2>/dev/null || log "Failed to install Yarn globally"
+                fi
+
+                # Install build tools if detected
+                if echo "$BUILD_TOOLS" | grep -qi "webpack"; then
+                    log "Installing Webpack globally..."
+                    npm install -g webpack webpack-cli 2>/dev/null || log "Failed to install Webpack globally"
+                fi
+
+                if echo "$BUILD_TOOLS" | grep -qi "vite"; then
+                    log "Installing Vite globally..."
+                    npm install -g vite 2>/dev/null || log "Failed to install Vite globally"
+                fi
+
+                # Report additional tools
+                if command -v yarn >/dev/null 2>&1; then
+                    log "✓ Yarn: $(yarn --version)"
+                fi
+            else
+                log "⚠️  npm not available"
             fi
-            if echo "$BUILD_TOOLS" | grep -qi "vite"; then
-                log "Installing Vite..."
-                npm install -g vite
-            fi
+        else
+            log "⚠️  Node.js not available (JavaScript/TypeScript build commands may fail)"
         fi
     fi
 
